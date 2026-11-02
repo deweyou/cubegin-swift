@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "artifact": "ios",
+  "version": "0.1.0",
+  "sourceCommit": "5f87bdae3e9b4e6dbd690809362a5016df4d5dda",
+  "sourceDirty": true,
+  "sourceObservation": "packaging-time",
+  "packagedAt": "2026-11-02T16:37:47.433Z",
+  "license": "GPL-3.0-only",
+  "files": {
+    "dist/CubeginFFI.xcframework/Info.plist": "abf4e3768e102c0f06b8b92244b081f58c87df08270187cab25628c0d934b7b1",
+    "dist/CubeginFFI.xcframework/LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "dist/CubeginFFI.xcframework/NOTICE": "277b2e2046f496f94c1234036c88e824a68be3911be9542a6cc6ae3d4ecd1d6a",
+    "dist/CubeginFFI.xcframework/ios-arm64/Headers/CubeginFFI.h": "a85179c1ed96506675642b8abee2b0e8cb34244abb5b00b9d7903990731cdd9e",
+    "dist/CubeginFFI.xcframework/ios-arm64/Headers/module.modulemap": "f53de61f91ec0ddde455a8bc72739b3b6db9981f045cff1b62e5d638ecad955e",
+    "dist/CubeginFFI.xcframework/ios-arm64/libcubegin_native.a": "12985d12f878ad90757db1bcefb3dcb083623b6f370e6c071ae6ddfde4cfa693",
+    "dist/CubeginFFI.xcframework/ios-arm64_x86_64-simulator/Headers/CubeginFFI.h": "a85179c1ed96506675642b8abee2b0e8cb34244abb5b00b9d7903990731cdd9e",
+    "dist/CubeginFFI.xcframework/ios-arm64_x86_64-simulator/Headers/module.modulemap": "f53de61f91ec0ddde455a8bc72739b3b6db9981f045cff1b62e5d638ecad955e",
+    "dist/CubeginFFI.xcframework/ios-arm64_x86_64-simulator/libcubegin-simulator.a": "ee9bb03dc677227d4a9e3d3103dec71ce33d44dc7b567427c6df93edb2a959aa",
+    "dist/CubeginFFI.xcframework/macos-arm64/Headers/CubeginFFI.h": "a85179c1ed96506675642b8abee2b0e8cb34244abb5b00b9d7903990731cdd9e",
+    "dist/CubeginFFI.xcframework/macos-arm64/Headers/module.modulemap": "f53de61f91ec0ddde455a8bc72739b3b6db9981f045cff1b62e5d638ecad955e",
+    "dist/CubeginFFI.xcframework/macos-arm64/libcubegin_native.a": "575239261cab21110fcba555e1e6f33616b846c9a374f69d54dc82d5d5ac5f93",
+    "sdk/swift/Generated/Cubegin.swift": "340b8ded53ac3d195bdabe7ba45fdce3bf5b96bae2032b1c8b8efc941608060d",
+    "sdk/swift/Generated/CubeginFFI.h": "a85179c1ed96506675642b8abee2b0e8cb34244abb5b00b9d7903990731cdd9e",
+    "sdk/swift/Generated/CubeginFFI.modulemap": "b11f42b04968a62e5685a04e18eb955d04d52a05e038912d90dc393bce893ffa",
+    "sdk/swift/PackageTests/EngineTests.swift": "4213ca675b07439bc25b5fc5dbe9b30cc165bdc6306b622b197d0dcd1ca4a209",
+    "Package.swift": "18eb2f0c3f2930a3c68f6c118e36b2d7befcafad47f2a22bcd1ecbe082269c96",
+    "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "NOTICE": "277b2e2046f496f94c1234036c88e824a68be3911be9542a6cc6ae3d4ecd1d6a",
+    "docs/provenance.md": "a8c4d50f2bb7c8b082e041ee6c149a4e4faed766b2d56b7b6630bcf6e4272491"
+  }
+}

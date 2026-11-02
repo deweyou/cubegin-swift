@@ -1,0 +1,24 @@
+// !$*UTF8*$!
+{archiveVersion = 1; classes = {}; objectVersion = 56; objects = {F0 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CubeginApp.swift; sourceTree = "<group>"; };
+B0 = {isa = PBXBuildFile; fileRef = F0; };
+F1 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Engine.swift; sourceTree = "<group>"; };
+B1 = {isa = PBXBuildFile; fileRef = F1; };
+F2 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimerModel.swift; sourceTree = "<group>"; };
+B2 = {isa = PBXBuildFile; fileRef = F2; };
+F3 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+B3 = {isa = PBXBuildFile; fileRef = F3; };
+APP = {isa = PBXFileReference; explicitFileType = wrapper.application; path = cubegin.app; sourceTree = BUILT_PRODUCTS_DIR; };
+ROOT = {isa = PBXGroup; children = (SRC, PRODUCTS); sourceTree = "<group>"; };
+SRC = {isa = PBXGroup; path = Cubegin; children = (F0,F1,F2,F3); sourceTree = "<group>"; };
+PRODUCTS = {isa = PBXGroup; children = (APP); name = Products; sourceTree = "<group>"; };
+SOURCES = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B0,B1,B2,B3); runOnlyForDeploymentPostprocessing = 0; };
+FRAMEWORKS = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+RESOURCES = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+TARGET = {isa = PBXNativeTarget; buildConfigurationList = TCL; buildPhases = (SOURCES,FRAMEWORKS,RESOURCES); buildRules = (); dependencies = (); name = CubeginPreview; packageProductDependencies = (); productName = cubegin; productReference = APP; productType = "com.apple.product-type.application"; };
+PROJECT = {isa = PBXProject; attributes = {LastUpgradeCheck = 2700; }; buildConfigurationList = PCL; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; knownRegions = (en,Base); mainGroup = ROOT; productRefGroup = PRODUCTS; projectDirPath = ""; projectRoot = ""; targets = (TARGET); packageReferences = (); };
+PDebug = {isa = XCBuildConfiguration; buildSettings = {}; name = Debug; };
+PRelease = {isa = XCBuildConfiguration; buildSettings = {}; name = Release; };
+PCL = {isa = XCConfigurationList; buildConfigurations = (PDebug,PRelease); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+TDebug = {isa = XCBuildConfiguration; buildSettings = {ONLY_ACTIVE_ARCH = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; ALWAYS_SEARCH_USER_PATHS = NO; PRODUCT_NAME = cubegin; PRODUCT_BUNDLE_IDENTIFIER = io.github.deweyou.cubegin.preview; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = cubegin; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UILaunchScreen_Generation = YES; TARGETED_DEVICE_FAMILY = "1,2"; SWIFT_VERSION = 6.0; IPHONEOS_DEPLOYMENT_TARGET = 26.0; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; CODE_SIGN_STYLE = Automatic;}; name = Debug; };
+TRelease = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; PRODUCT_NAME = cubegin; PRODUCT_BUNDLE_IDENTIFIER = io.github.deweyou.cubegin.preview; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = cubegin; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UILaunchScreen_Generation = YES; TARGETED_DEVICE_FAMILY = "1,2"; SWIFT_VERSION = 6.0; IPHONEOS_DEPLOYMENT_TARGET = 26.0; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; CODE_SIGN_STYLE = Automatic;}; name = Release; };
+TCL = {isa = XCConfigurationList; buildConfigurations = (TDebug,TRelease); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };}; rootObject = PROJECT;}

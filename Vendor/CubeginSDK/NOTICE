@@ -1,0 +1,55 @@
+Cubegin — GPL-3.0-only
+
+Legacy reference: deweyou/cubegin-core (formerly cubekit) commit 79a1e4c4c5239fbcda8cccf313a81b8d7d430a97.
+The previous implementation referenced GPL-3.0 TNoodle-lib v0.19.2 and cstimer;
+this rebuild retains the repository license and records legacy state fixtures.
+No TNoodle server/UI code is included.
+
+Historical min2phase attribution, Chen Shuang, MIT.
+The current solver is maintained in crates/tnoodle; the separate min2phase 0.2.4
+crate is no longer a runtime dependency. Preserve the original MIT notice:
+
+MIT License
+
+Copyright (c) 2024 Chen Shuang
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+Native binding runtime: UniFFI 0.32.2, Mozilla contributors, MPL-2.0.
+https://github.com/mozilla/uniffi-rs
+Android runtime: JNA 5.17.0, LGPL-2.1-or-later OR Apache-2.0 (Apache-2.0 option).
+https://github.com/java-native-access/jna
+Gradle wrapper 8.11.1: Gradle contributors, Apache-2.0.
+https://github.com/gradle/gradle
+See docs/provenance.md for dependencies and release requirements.
+
+Maintained TNoodle backend: tnoodle-rs 0.1.1 (GPL-3.0-or-later), source commit
+373e868f802e0f095bea9353282d9fdca5d1883d, enekocm7/cube-tui/crates/tnoodle-rs.
+Includes TNoodle-lib puzzle and solver ports, including Levi Gibson FTO solver.
+Upstream archive omitted its license file; repository GPLv3 text is included in
+crates/tnoodle/LICENSE. Local changes and original reference are recorded there.
+
+Player geometry: legacy Cubegin player adapters at 79a1e4c. Pyraminx, Skewb
+and Megaminx reference cubing.js PuzzleGeometry static sticker coordinates and
+move mappings, https://github.com/cubing/cubing.js, MPL-2.0 OR GPL-3.0-or-later
+(GPL-3.0 option selected). No cubing.js or Three.js runtime is bundled.
+Auxiliary solver transition/pruning tables and training case coordinates are
+derived from the legacy GPL Cubegin/cstimer implementation; see crate data READMEs.
+Cubegin is not an official WCA scramble program.
