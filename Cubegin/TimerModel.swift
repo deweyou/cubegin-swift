@@ -43,8 +43,11 @@ enum TimerInput { case touch, keyboard }
         get { event }
         set { if mode == .standard { standardEvent = newValue } else { trainingEvent = newValue } }
     }
-    var scramble: Scramble?
-    var busy = false
+    private(set) var scramble: Scramble?
+    private(set) var nextScramble: Scramble?
+    private(set) var busy = false
+    @ObservationIgnored private var generationTask: Task<Void, Never>?
+    @ObservationIgnored private var prefetchTask: Task<Scramble, Error>?
     var error: String?
     private(set) var started: ContinuousClock.Instant?
     private(set) var isReady = false
@@ -63,13 +66,64 @@ enum TimerInput { case touch, keyboard }
         do { solves = try JSONDecoder().decode([Solve].self, from: Data(contentsOf: storage)) }
         catch { if FileManager.default.fileExists(atPath: storage.path) { self.error = AppLanguage.saved.text("成绩读取失败：", "Could not load results: ") + error.localizedDescription } }
     }
-    func refresh() async {
-        guard !busy, started == nil else { return }
+    func refresh(advance: Bool = false) {
+        guard started == nil else { return }
+        if let lastSolve, lastSolve.event != event {
+            lastSolveID = nil
+        }
         cancelPress()
-        busy = true; scramble = nil
-        defer { busy = false }
-        do { scramble = try await Engine.scramble(event: event) } catch { self.error = error.localizedDescription }
+        generationTask?.cancel()
+        let prefetched = advance ? prefetchTask : nil
+        if !advance { prefetchTask?.cancel() }
+        prefetchTask = nil
+
+        if advance, let nextScramble {
+            scramble = nextScramble
+            self.nextScramble = nil
+            busy = false
+            return
+        }
+
+        nextScramble = nil
+        scramble = nil
+        busy = true
+        let event = self.event
+        generationTask = Task { [weak self] in
+            do {
+                let generated: Scramble
+                if let prefetched, let result = try? await prefetched.value {
+                    generated = result
+                } else {
+                    try Task.checkCancellation()
+                    generated = try await Engine.scramble(event: event)
+                }
+                guard !Task.isCancelled, let self, self.event == event else { return }
+                self.scramble = generated
+                self.nextScramble = nil
+                self.busy = false
+            } catch {
+                guard !Task.isCancelled, let self, self.event == event else { return }
+                self.error = error.localizedDescription
+                self.busy = false
+            }
+        }
     }
+
+    private func start(at instant: ContinuousClock.Instant) {
+        lastSolveID = nil
+        started = instant
+        guard prefetchTask == nil else { return }
+        let event = self.event
+        prefetchTask = Task { [weak self] in
+            let generated = try await Engine.scramble(event: event)
+            try Task.checkCancellation()
+            if let self, self.event == event, self.started != nil {
+                self.nextScramble = generated
+            }
+            return generated
+        }
+    }
+
     func press(_ input: TimerInput, delayTenths: Int) {
         if started != nil {
             stop()
@@ -97,8 +151,7 @@ enum TimerInput { case touch, keyboard }
         let now = ContinuousClock.now
         cancelPress()
         if now >= readyAt, scramble != nil, !busy {
-            lastSolveID = nil
-            started = now
+            start(at: now)
         }
     }
 
@@ -115,6 +168,9 @@ enum TimerInput { case touch, keyboard }
         cancelPress()
         guard started != nil else { return }
         started = nil
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        nextScramble = nil
         error = AppLanguage.saved.text("计时因 App 进入后台或中断而取消，未保存成绩。", "Timing was interrupted. The solve was not saved.")
     }
 
@@ -123,8 +179,7 @@ enum TimerInput { case touch, keyboard }
             stop()
         } else if scramble != nil, !busy {
             cancelPress()
-            lastSolveID = nil
-            started = .now
+            start(at: .now)
         }
     }
 
@@ -137,7 +192,7 @@ enum TimerInput { case touch, keyboard }
         lastSolveID = solve.id
         solves.insert(solve, at: 0)
         _ = save(solves)
-        Task { await refresh() }
+        refresh(advance: true)
     }
 
     func togglePenalty(_ penalty: SolvePenalty) {
@@ -211,22 +266,22 @@ struct ScrambleChoice: Identifiable {
 }
 enum ScrambleCatalog {
     static let standard: [ScrambleChoice] = [
-        .init(id: "222", title: "二阶速拧", group: "", englishTitle: "2x2x2", englishGroup: ""),
         .init(id: "333", title: "三阶速拧", group: "", englishTitle: "3x3x3", englishGroup: ""),
-        .init(id: "333oh", title: "三阶单手", group: "", englishTitle: "3x3 oh", englishGroup: ""),
-        .init(id: "333bld", title: "三阶盲拧", group: "", englishTitle: "3x3 bld", englishGroup: ""),
+        .init(id: "222", title: "二阶速拧", group: "", englishTitle: "2x2x2", englishGroup: ""),
         .init(id: "444", title: "四阶速拧", group: "", englishTitle: "4x4x4", englishGroup: ""),
-        .init(id: "444bld", title: "四阶盲拧", group: "", englishTitle: "4x4 bld", englishGroup: ""),
         .init(id: "555", title: "五阶速拧", group: "", englishTitle: "5x5x5", englishGroup: ""),
-        .init(id: "555bld", title: "五阶盲拧", group: "", englishTitle: "5x5 bld", englishGroup: ""),
         .init(id: "666", title: "六阶速拧", group: "", englishTitle: "6x6x6", englishGroup: ""),
         .init(id: "777", title: "七阶速拧", group: "", englishTitle: "7x7x7", englishGroup: ""),
+        .init(id: "333bld", title: "三阶盲拧", group: "", englishTitle: "3x3 bld", englishGroup: ""),
+        .init(id: "333oh", title: "三阶单手", group: "", englishTitle: "3x3 oh", englishGroup: ""),
         .init(id: "clock", title: "魔表", group: "", englishTitle: "clock", englishGroup: ""),
         .init(id: "minx", title: "五魔方", group: "", englishTitle: "megaminx", englishGroup: ""),
         .init(id: "pyram", title: "金字塔", group: "", englishTitle: "pyraminx", englishGroup: ""),
         .init(id: "skewb", title: "斜转魔方", group: "", englishTitle: "skewb", englishGroup: ""),
         .init(id: "sq1", title: "Square-1", group: "", englishTitle: "sq1", englishGroup: ""),
         .init(id: "fto", title: "FTO", group: "", englishTitle: "FTO", englishGroup: ""),
+        .init(id: "444bld", title: "四阶盲拧", group: "", englishTitle: "4x4 bld", englishGroup: ""),
+        .init(id: "555bld", title: "五阶盲拧", group: "", englishTitle: "5x5 bld", englishGroup: ""),
     ]
     static let training: [ScrambleChoice] = [
         .init(id: "222.cll", title: "CLL", group: "2x2x2", englishTitle: "CLL", englishGroup: "2x2x2"),

@@ -45,7 +45,7 @@ struct AppTabsView: View {
         .labelStyle(.iconOnly)
         .task(id: isActive ? model.event : nil) {
             guard isActive else { return }
-            await model.refresh()
+            model.refresh()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { model.interrupt() }

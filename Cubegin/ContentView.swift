@@ -9,7 +9,9 @@ struct ContentView: View {
     @State private var idlePageFrame: CGRect?
     private var isTiming: Bool { model.started != nil }
     @State private var showsProjectList = false
+    @State private var timerTouchResumesAt: ContinuousClock.Instant?
     @State private var solveToDelete: Solve?
+    @State private var showsGenerating = false
     @Environment(\.locale) private var locale
     private var language: AppLanguage { locale.appLanguage }
     private let controlIconSize: CGFloat = 20
@@ -71,8 +73,12 @@ struct ContentView: View {
             if !active { model.cancelPress() }
         }
         .onChange(of: showsProjectList) { _, isShowing in
-            if isShowing { model.cancelPress() }
-            else if isTimerActive { hasTimerKeyboardFocus = true }
+            model.cancelPress()
+            if !isShowing {
+                // The tap dismissing the popover can also reach the page beneath it.
+                timerTouchResumesAt = .now.advanced(by: .milliseconds(250))
+                if isTimerActive { hasTimerKeyboardFocus = true }
+            }
         }
         .alert(language.text("确定删除这条成绩吗？", "Delete this solve?"), isPresented: Binding(
             get: { solveToDelete != nil },
@@ -83,6 +89,13 @@ struct ContentView: View {
                 guard model.lastSolve?.id == solve.id else { return }
                 model.deleteLastSolve()
             }
+        }
+        .task(id: model.busy) {
+            showsGenerating = false
+            guard model.busy else { return }
+            do { try await Task.sleep(for: .milliseconds(250)) }
+            catch { return }
+            if model.busy { showsGenerating = true }
         }
         .onChange(of: hasTimerKeyboardFocus) { _, focused in
             if !focused { model.cancelPress(.keyboard) }
@@ -122,6 +135,7 @@ struct ContentView: View {
         let controlsHeight = showsControlsInPage ? controlRowHeight : 0
         let topClearance: CGFloat = 8
         let controlSpacing: CGFloat = showsControlsInPage ? 8 : 0
+        let timerTouchTop = isTiming ? 0 : topClearance + controlsHeight + controlSpacing
         let formulaHeight = max(1, min(height * 0.3,
             height / 2 - timerNumberHeight / 2 - controlsHeight - controlSpacing - topClearance - 8))
         let summaryWidth = max(0, (contentWidth - 12) / 3.2)
@@ -132,13 +146,15 @@ struct ContentView: View {
             TimerTouchSurface(
                 onDown: {
                     guard isTimerActive, !showsProjectList, solveToDelete == nil else { return }
+                    if let timerTouchResumesAt, ContinuousClock.now < timerTouchResumesAt { return }
                     model.press(.touch, delayTenths: startDelayTenths)
                 },
                 onUp: { model.release(.touch) },
                 onCancel: { model.cancelPress(.touch) }
             )
-            .frame(width: width, height: height)
-            .frame(width: contentWidth)
+            .frame(width: width, height: max(0, height - timerTouchTop))
+            .frame(width: contentWidth, height: height, alignment: .bottom)
+            .allowsHitTesting(isTimerActive && !showsProjectList && solveToDelete == nil)
             .accessibilityHidden(true)
 
             if !isTiming {
@@ -158,8 +174,11 @@ struct ContentView: View {
                         .disabled(model.busy || model.started != nil)
                     }
                     Group {
-                        if model.busy && model.scramble == nil {
-                            ProgressView(language.text("计算中…", "Generating…"))
+                        if model.busy {
+                            if showsGenerating {
+                                Text(language.text("生成中…", "Generating…"))
+                                    .foregroundStyle(.secondary)
+                            }
                         } else {
                             scrambleFormula(width: contentWidth)
                         }
@@ -172,20 +191,21 @@ struct ContentView: View {
                 .frame(height: height, alignment: .top)
             }
 
-            if !isTiming, let svg = model.scramble?.svg, diagramHeight > 0 {
-                HStack(spacing: 12) {
-                    // Reserve the leading column for the results summary.
-                    Color.clear
-                        .frame(width: summaryWidth, height: diagramHeight)
-                        .accessibilityHidden(true)
-                    SVGView(svg: svg)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: diagramHeight)
-                        .accessibilityLabel(language.text("当前打乱状态图", "Current scramble diagram"))
-                }
-                .padding(.bottom, diagramBottomPadding)
-                .frame(height: height, alignment: .bottom)
+            HStack(spacing: 12) {
+                // Reserve the leading column for the results summary.
+                Color.clear
+                    .frame(width: summaryWidth, height: diagramHeight)
+                    .accessibilityHidden(true)
+                SVGView(svg: model.scramble?.svg, nextSVG: model.nextScramble?.svg)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: diagramHeight)
+                    .accessibilityLabel(language.text("当前打乱状态图", "Current scramble diagram"))
             }
+            .padding(.bottom, diagramBottomPadding)
+            .frame(height: height, alignment: .bottom)
+            .opacity(isTiming || diagramHeight == 0 ? 0 : 1)
+            .allowsHitTesting(false)
+            .accessibilityHidden(isTiming || diagramHeight == 0)
 
             timerDisplay(fontSize: timerFontSize, numberHeight: timerNumberHeight)
                 .frame(width: max(1, min(timerFrame.width, 880) - 48))
@@ -510,35 +530,95 @@ private struct TimerTouchSurface: UIViewRepresentable {
 }
 
 private struct SVGView: UIViewRepresentable {
-    let svg: String
+    let svg: String?
+    let nextSVG: String?
 
-    func makeUIView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
-        configuration.ignoresViewportScaleLimits = false
-        let view = WKWebView(frame: .zero, configuration: configuration)
-        view.isOpaque = false
-        view.backgroundColor = .clear
-        view.scrollView.isScrollEnabled = false
-        view.scrollView.pinchGestureRecognizer?.isEnabled = false
-        return view
+    func makeUIView(context: Context) -> UIView { UIView() }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        context.coordinator.update(in: view, svg: svg, nextSVG: nextSVG)
     }
-    func updateUIView(_ view: WKWebView, context: Context) {
-        guard context.coordinator.svg != svg else { return }
-        context.coordinator.svg = svg
-        let encodedSVG = Data(svg.utf8).base64EncodedString()
-        view.loadHTMLString("""
-            <!doctype html>
-            <meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no">
-            <style>
-              html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
-              img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: right bottom; }
-            </style>
-            <img src="data:image/svg+xml;base64,\(encodedSVG)" alt="">
-            """, baseURL: nil)
-    }
+
     func makeCoordinator() -> Coordinator { Coordinator() }
-    class Coordinator {
-        var svg = ""
+
+    // Keep the visible diagram intact while the other WebView loads its replacement.
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        @MainActor private final class Slot {
+            let view: WKWebView
+            var svg: String?
+            var navigation: WKNavigation?
+            var ready = false
+
+            init() {
+                let configuration = WKWebViewConfiguration()
+                configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+                configuration.ignoresViewportScaleLimits = false
+                view = WKWebView(frame: .zero, configuration: configuration)
+                view.isOpaque = false
+                view.backgroundColor = .clear
+                view.scrollView.isScrollEnabled = false
+                view.scrollView.pinchGestureRecognizer?.isEnabled = false
+                view.isHidden = true
+            }
+        }
+
+        private var slots: [Slot] = []
+        private var visible: Slot?
+        private var desiredSVG: String?
+
+        func update(in container: UIView, svg: String?, nextSVG: String?) {
+            desiredSVG = svg
+            if let svg, visible?.svg != svg {
+                if let loaded = slots.first(where: { $0.svg == svg && $0.ready }) {
+                    show(loaded)
+                } else {
+                    load(svg, in: container)
+                    return
+                }
+            }
+            if let nextSVG, nextSVG != visible?.svg {
+                load(nextSVG, in: container)
+            }
+        }
+
+        private func load(_ svg: String, in container: UIView) {
+            let slot: Slot
+            if let spare = slots.first(where: { $0 !== visible }) {
+                slot = spare
+            } else {
+                slot = Slot()
+                slots.append(slot)
+                slot.view.navigationDelegate = self
+                slot.view.frame = container.bounds
+                slot.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                container.addSubview(slot.view)
+            }
+            guard slot.svg != svg else { return }
+            slot.svg = svg
+            slot.ready = false
+            let encodedSVG = Data(svg.utf8).base64EncodedString()
+            slot.navigation = slot.view.loadHTMLString("""
+                <!doctype html>
+                <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+                <style>
+                  html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+                  img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: right bottom; }
+                </style>
+                <img src="data:image/svg+xml;base64,\(encodedSVG)" alt="">
+                """, baseURL: nil)
+        }
+
+        private func show(_ slot: Slot) {
+            visible?.view.isHidden = true
+            slot.view.isHidden = false
+            visible = slot
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard let slot = slots.first(where: { $0.view === webView }),
+                  slot.navigation === navigation else { return }
+            slot.ready = true
+            if let desiredSVG, slot.svg == desiredSVG { show(slot) }
+        }
     }
 }
