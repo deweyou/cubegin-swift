@@ -215,9 +215,7 @@ struct ContentView: View {
         .padding(.horizontal, 24)
         .frame(maxWidth: 880)
         .frame(maxWidth: .infinity)
-        .background {
-            LinearGradient(colors: [Color.cyan.opacity(0.14), Color(.systemBackground), Color.indigo.opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()
-        }
+        .appBackground()
     }
 
     private func timerDisplay(fontSize: CGFloat, numberHeight: CGFloat) -> some View {
@@ -330,75 +328,7 @@ struct ContentView: View {
     }
 
     private var projectMenu: some View {
-        projectButton(event: model.event, language: language, large: usesTopNavigation) {
-            showsProjectList = true
-        }
-        .popover(isPresented: $showsProjectList, arrowEdge: .top) {
-            List {
-                if model.mode == .standard {
-                    ForEach(ScrambleCatalog.standard, content: projectRow)
-                } else {
-                    ForEach(ScrambleCatalog.trainingGroups(in: language), id: \.self) { group in
-                        DisclosureGroup(group) {
-                            ForEach(ScrambleCatalog.training.filter { $0.group(in: language) == group }, content: projectRow)
-                        }
-                    }
-                }
-            }
-            .listStyle(.plain)
-            .frame(width: 300, height: 400)
-            .presentationCompactAdaptation(.popover)
-        }
-    }
-
-    private func projectRow(_ choice: ScrambleChoice) -> some View {
-        Button {
-            showsProjectList = false
-            model.eventSelection = choice.id
-        } label: {
-            HStack {
-                Text(choice.title(in: language))
-                Spacer()
-                if choice.id == model.event {
-                    Image(systemName: "checkmark")
-                        .accessibilityHidden(true)
-                }
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(choice.id == model.event ? .isSelected : [])
-    }
-
-    private func projectButton(event: String, language: AppLanguage, large: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            projectMenuLabel(event: event, language: language, large: large)
-        }
-        .buttonStyle(.plain)
-        .controlSize(large ? .regular : .small)
-        .accessibilityLabel(language.text("打乱项目", "Event"))
-        .accessibilityValue(ScrambleCatalog.title(event, in: language))
-    }
-
-    private func projectMenuLabel(event: String, language: AppLanguage, large: Bool) -> some View {
-        let iconID = String(event.prefix { $0 != "." })
-        return HStack(spacing: 6) {
-            Image("Event-\(iconID)")
-                .resizable()
-                .scaledToFit()
-                .frame(width: controlIconSize, height: controlIconSize)
-                .accessibilityHidden(true)
-            if let title = ScrambleCatalog.trainingSelectionTitle(event, in: language) {
-                Text(title).lineLimit(1)
-            }
-            Image(systemName: "chevron.down")
-                .font(.caption2.weight(.semibold))
-                .accessibilityHidden(true)
-        }
-        .font(large ? .body.weight(.medium) : .subheadline.weight(.medium))
-        .foregroundStyle(.primary)
-        .frame(minWidth: 44, minHeight: controlRowHeight, alignment: .leading)
-        .contentShape(Rectangle())
+        EventPicker(model: model, isPresented: $showsProjectList, large: usesTopNavigation)
     }
 
 #if DEBUG
@@ -417,8 +347,8 @@ struct ContentView: View {
             choices.map { choice in
                 ["language": language.rawValue, "id": choice.id,
                  "title": ScrambleCatalog.trainingSelectionTitle(choice.id, in: language) ?? choice.title(in: language),
-                 "compactPicker": width(projectButton(event: choice.id, language: language, large: false, action: {}), language: language),
-                 "regularPicker": width(projectButton(event: choice.id, language: language, large: true, action: {}), language: language)] as [String: Any]
+                 "compactPicker": width(EventPicker.projectButton(event: choice.id, language: language, large: false, action: {}), language: language),
+                 "regularPicker": width(EventPicker.projectButton(event: choice.id, language: language, large: true, action: {}), language: language)] as [String: Any]
             }
         }
         do {
@@ -442,24 +372,8 @@ struct ContentView: View {
         }
     }
 
-    private var trainingButton: some View {
-        Button {
-            model.mode = model.mode == .training ? .standard : .training
-        } label: {
-            Image(systemName: "dumbbell")
-                .resizable()
-                .scaledToFit()
-                .frame(width: controlIconSize, height: controlIconSize)
-                .foregroundStyle(model.mode == .training ? Color.accentColor : Color.secondary)
-                .modifier(CompactControlTarget(size: compactControlSize))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(language.text("训练模式", "Training"))
-        .accessibilityValue(model.mode == .training ? language.text("已开启", "On") : language.text("已关闭", "Off"))
-        .accessibilityAddTraits(model.mode == .training ? .isSelected : [])
-        .accessibilityHint(language.text("切换标准打乱与训练打乱", "Switch between standard and training scrambles"))
-        .frame(minHeight: controlRowHeight)
-    }
+    private var trainingButton: some View { TrainingButton(model: model) }
+
 }
 
 private struct CompactControlTarget: ViewModifier {
@@ -529,13 +443,15 @@ private struct TimerTouchSurface: UIViewRepresentable {
     }
 }
 
-private struct SVGView: UIViewRepresentable {
+struct SVGView: UIViewRepresentable {
     let svg: String?
     let nextSVG: String?
+    var centersContent = false
 
     func makeUIView(context: Context) -> UIView { UIView() }
 
     func updateUIView(_ view: UIView, context: Context) {
+        context.coordinator.setCentersContent(centersContent)
         context.coordinator.update(in: view, svg: svg, nextSVG: nextSVG)
     }
 
@@ -543,6 +459,13 @@ private struct SVGView: UIViewRepresentable {
 
     // Keep the visible diagram intact while the other WebView loads its replacement.
     final class Coordinator: NSObject, WKNavigationDelegate {
+        private var centersContent = false
+
+        func setCentersContent(_ value: Bool) {
+            guard centersContent != value else { return }
+            centersContent = value
+            slots.forEach { $0.svg = nil }
+        }
         @MainActor private final class Slot {
             let view: WKWebView
             var svg: String?
@@ -602,7 +525,7 @@ private struct SVGView: UIViewRepresentable {
                 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
                 <style>
                   html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
-                  img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: right bottom; }
+                  img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: \(centersContent ? "center" : "right bottom"); }
                 </style>
                 <img src="data:image/svg+xml;base64,\(encodedSVG)" alt="">
                 """, baseURL: nil)
@@ -620,5 +543,131 @@ private struct SVGView: UIViewRepresentable {
             slot.ready = true
             if let desiredSVG, slot.svg == desiredSVG { show(slot) }
         }
+    }
+}
+
+struct EventPicker: View {
+    @Bindable var model: TimerModel
+    @Binding var isPresented: Bool
+    var large = false
+    @Environment(\.locale) private var locale
+    private var language: AppLanguage { locale.appLanguage }
+    private var showsProjectList: Bool {
+        get { isPresented }
+        nonmutating set { isPresented = newValue }
+    }
+    var body: some View {
+        Self.projectButton(event: model.event, language: language, large: large) {
+            showsProjectList = true
+        }
+        .popover(isPresented: $isPresented, arrowEdge: .top) {
+            List {
+                if model.mode == .standard {
+                    ForEach(ScrambleCatalog.standard, content: projectRow)
+                } else {
+                    ForEach(ScrambleCatalog.trainingGroups(in: language), id: \.self) { group in
+                        DisclosureGroup(group) {
+                            ForEach(ScrambleCatalog.training.filter { $0.group(in: language) == group }, content: projectRow)
+                        }
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .frame(width: 300, height: 400)
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    private func projectRow(_ choice: ScrambleChoice) -> some View {
+        Button {
+            showsProjectList = false
+            model.eventSelection = choice.id
+        } label: {
+            HStack {
+                Text(choice.title(in: language))
+                Spacer()
+                if choice.id == model.event {
+                    Image(systemName: "checkmark")
+                        .accessibilityHidden(true)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(choice.id == model.event ? .isSelected : [])
+    }
+
+    static func projectButton(event: String, language: AppLanguage, large: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            projectMenuLabel(event: event, language: language, large: large)
+        }
+        .buttonStyle(.plain)
+        .controlSize(large ? .regular : .small)
+        .accessibilityLabel(language.text("打乱项目", "Event"))
+        .accessibilityValue(ScrambleCatalog.title(event, in: language))
+    }
+
+    static func projectMenuLabel(event: String, language: AppLanguage, large: Bool) -> some View {
+        let iconID = String(event.prefix { $0 != "." })
+        return HStack(spacing: 6) {
+            Image("Event-\(iconID)")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 20, height: 20)
+                .accessibilityHidden(true)
+            if let title = ScrambleCatalog.trainingSelectionTitle(event, in: language) {
+                Text(title).lineLimit(1)
+            }
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.semibold))
+                .accessibilityHidden(true)
+        }
+        .font(large ? .body.weight(.medium) : .subheadline.weight(.medium))
+        .foregroundStyle(.primary)
+        .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+}
+
+struct TrainingButton: View {
+    @Bindable var model: TimerModel
+    @Environment(\.locale) private var locale
+    private var language: AppLanguage { locale.appLanguage }
+    var body: some View {
+        Button {
+            model.mode = model.mode == .training ? .standard : .training
+        } label: {
+            Image(systemName: "dumbbell")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 20, height: 20)
+                .foregroundStyle(model.mode == .training ? Color.accentColor : Color.secondary)
+                .modifier(CompactControlTarget(size: 32))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(language.text("训练模式", "Training"))
+        .accessibilityValue(model.mode == .training ? language.text("已开启", "On") : language.text("已关闭", "Off"))
+        .accessibilityAddTraits(model.mode == .training ? .isSelected : [])
+        .accessibilityHint(language.text("切换标准打乱与训练打乱", "Switch between standard and training scrambles"))
+        .frame(minHeight: 44)
+    }
+}
+
+private struct AppBackground: View {
+    var body: some View {
+        LinearGradient(
+            colors: [Color.cyan.opacity(0.14), Color(.systemBackground), Color.indigo.opacity(0.12)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .ignoresSafeArea()
+    }
+}
+
+extension View {
+    func appBackground() -> some View {
+        scrollContentBackground(.hidden)
+            .background { AppBackground() }
     }
 }

@@ -9,6 +9,7 @@ struct Solve: Codable, Identifiable {
     let scramble: String
     var date = Date()
     var penalty: SolvePenalty?
+    var groupID: String?
 
     var resultSeconds: Double? {
         switch penalty {
@@ -26,6 +27,28 @@ struct Solve: Codable, Identifiable {
         }
     }
 }
+struct SolveGroup: Codable, Identifiable {
+    static let maximumNameLength = 16
+
+    static func isValidName(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed.count <= maximumNameLength && trimmed.rangeOfCharacter(from: .newlines) == nil
+    }
+
+    var id: String
+    let event: String
+    var name: String
+    var isDefault: Bool
+    var displayName: String { name.isEmpty ? "Default" : name }
+
+    static func initialID(for event: String) -> String { "default:" + event }
+}
+
+private struct ResultsStore: Codable {
+    var solves: [Solve]
+    var groups: [SolveGroup]
+}
+
 enum TimerInput { case touch, keyboard }
 
 @MainActor @Observable final class TimerModel {
@@ -55,6 +78,19 @@ enum TimerInput { case touch, keyboard }
     @ObservationIgnored private var readyAt: ContinuousClock.Instant?
     @ObservationIgnored private var readinessTask: Task<Void, Never>?
     private(set) var solves: [Solve] = []
+    private(set) var groups: [SolveGroup] = []
+    private(set) var selectedGroupID: String?
+    private var selectionEvent: String?
+    var eventGroups: [SolveGroup] { groups.filter { $0.event == event } }
+    var currentGroup: SolveGroup? {
+        eventGroups.first { $0.id == selectedGroupID } ?? eventGroups.first { $0.isDefault }
+    }
+    var groupSolves: [Solve] {
+        guard let currentGroup else { return [] }
+        return solves.filter {
+            $0.event == event && ($0.groupID ?? SolveGroup.initialID(for: $0.event)) == currentGroup.id
+        }
+    }
     private var lastSolveID: Solve.ID?
     var lastSolve: Solve? {
         guard let solve = solves.first, solve.id == lastSolveID else { return nil }
@@ -63,11 +99,128 @@ enum TimerInput { case touch, keyboard }
     private let storage: URL
     init(storage: URL = URL.documentsDirectory.appending(path: "solves.json")) {
         self.storage = storage
-        do { solves = try JSONDecoder().decode([Solve].self, from: Data(contentsOf: storage)) }
+        do {
+            let data = try Data(contentsOf: storage)
+            if let store = try? JSONDecoder().decode(ResultsStore.self, from: data) {
+                solves = store.solves
+                groups = store.groups
+            } else {
+                solves = try JSONDecoder().decode([Solve].self, from: data)
+            }
+        }
         catch { if FileManager.default.fileExists(atPath: storage.path) { self.error = AppLanguage.saved.text("成绩读取失败：", "Could not load results: ") + error.localizedDescription } }
+        let events = Set((ScrambleCatalog.standard + ScrambleCatalog.training).map(\.id) + solves.map(\.event))
+        for event in events.sorted() where !groups.contains(where: { $0.event == event }) {
+            groups.append(SolveGroup(id: SolveGroup.initialID(for: event), event: event, name: "", isDefault: true))
+        }
     }
+
+    func selectGroup(_ id: String) {
+        guard started == nil, eventGroups.contains(where: { $0.id == id }) else { return }
+        cancelPress()
+        selectedGroupID = id
+        lastSolveID = nil
+    }
+
+    @discardableResult
+    func saveGroup(id: String? = nil, name: String, isDefault: Bool, selectNewGroup: Bool = true) -> Bool {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard started == nil, SolveGroup.isValidName(name) else { return false }
+        var updated = groups
+        let groupID = id ?? UUID().uuidString
+        if isDefault {
+            for index in updated.indices where updated[index].event == event {
+                updated[index].isDefault = false
+            }
+        }
+        if let index = updated.firstIndex(where: { $0.id == groupID && $0.event == event }) {
+            // An existing default remains the default until another group replaces it.
+            let wasDefault = groups[index].isDefault
+            updated[index].name = name
+            updated[index].isDefault = isDefault || wasDefault
+        } else {
+            updated.append(SolveGroup(id: groupID, event: event, name: name, isDefault: isDefault))
+        }
+        guard save(solves, groups: updated) else { return false }
+        groups = updated
+        if id == nil && selectNewGroup { selectGroup(groupID) }
+        return true
+    }
+
+    @discardableResult
+    func moveSolves(_ ids: Set<Solve.ID>, toGroup targetID: String) -> Bool {
+        guard started == nil, !ids.isEmpty, let source = currentGroup,
+              let target = eventGroups.first(where: { $0.id == targetID }),
+              target.id != source.id,
+              ids.isSubset(of: Set(groupSolves.map(\.id))) else { return false }
+        return moveStoredSolves(ids, toGroup: target.id)
+    }
+
+    @discardableResult
+    func moveSolve(_ id: Solve.ID, toGroup targetID: String) -> Bool {
+        guard started == nil, let solve = solves.first(where: { $0.id == id }),
+              let target = groups.first(where: { $0.id == targetID && $0.event == solve.event }),
+              target.id != (solve.groupID ?? SolveGroup.initialID(for: solve.event)) else { return false }
+        return moveStoredSolves([id], toGroup: target.id)
+    }
+
+    private func moveStoredSolves(_ ids: Set<Solve.ID>, toGroup targetID: String) -> Bool {
+        var updated = solves
+        for index in updated.indices where ids.contains(updated[index].id) {
+            updated[index].groupID = targetID
+        }
+        guard save(updated) else { return false }
+        solves = updated
+        if let lastSolveID, ids.contains(lastSolveID) { self.lastSolveID = nil }
+        return true
+    }
+
+    @discardableResult
+    func moveGroup(_ id: String, to targetID: String) -> Bool {
+        guard started == nil,
+              let source = eventGroups.firstIndex(where: { $0.id == id }),
+              let target = eventGroups.firstIndex(where: { $0.id == targetID }),
+              source != target else { return false }
+        var reordered = eventGroups
+        reordered.move(fromOffsets: IndexSet(integer: source), toOffset: source < target ? target + 1 : target)
+        return reorderGroups(reordered.map(\.id))
+    }
+
+    @discardableResult
+    func reorderGroups(_ ids: [String]) -> Bool {
+        guard started == nil, ids.count == eventGroups.count, Set(ids) == Set(eventGroups.map(\.id)) else { return false }
+        let reordered = ids.compactMap { id in eventGroups.first(where: { $0.id == id }) }
+        var updated = groups
+        let positions = groups.indices.filter { groups[$0].event == event }
+        for (position, group) in zip(positions, reordered) { updated[position] = group }
+        guard save(solves, groups: updated) else { return false }
+        groups = updated
+        return true
+    }
+
+    @discardableResult
+    func deleteGroup(_ id: String) -> Bool {
+        guard started == nil,
+              let group = eventGroups.first(where: { $0.id == id }),
+              !group.isDefault else { return false }
+        let updatedGroups = groups.filter { $0.id != id }
+        let updatedSolves = solves.filter {
+            $0.event != event || ($0.groupID ?? SolveGroup.initialID(for: $0.event)) != id
+        }
+        guard save(updatedSolves, groups: updatedGroups) else { return false }
+        groups = updatedGroups
+        solves = updatedSolves
+        if selectedGroupID == id { selectedGroupID = eventGroups.first(where: { $0.isDefault })?.id }
+        if !solves.contains(where: { $0.id == lastSolveID }) { lastSolveID = nil }
+        return true
+    }
+
     func refresh(advance: Bool = false) {
         guard started == nil else { return }
+        if selectionEvent != event {
+            selectedGroupID = eventGroups.first(where: { $0.isDefault })?.id
+            selectionEvent = event
+        }
         if let lastSolve, lastSolve.event != event {
             lastSolveID = nil
         }
@@ -187,7 +340,7 @@ enum TimerInput { case touch, keyboard }
         guard let start = started else { return }
         let duration = start.duration(to: .now)
         let seconds = Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
-        let solve = Solve(seconds: seconds, event: event, scramble: scramble?.algorithm ?? "")
+        let solve = Solve(seconds: seconds, event: event, scramble: scramble?.algorithm ?? "", groupID: currentGroup?.id)
         started = nil
         lastSolveID = solve.id
         solves.insert(solve, at: 0)
@@ -196,26 +349,51 @@ enum TimerInput { case touch, keyboard }
     }
 
     func togglePenalty(_ penalty: SolvePenalty) {
-        guard started == nil, let solve = lastSolve else { return }
+        guard let solve = lastSolve else { return }
+        togglePenalty(penalty, for: solve.id)
+    }
+
+    @discardableResult
+    func togglePenalty(_ penalty: SolvePenalty, for id: Solve.ID) -> Bool {
+        guard let solve = solves.first(where: { $0.id == id }) else { return false }
+        return setPenalty(solve.penalty == penalty ? nil : penalty, for: id)
+    }
+
+    @discardableResult
+    func setPenalty(_ penalty: SolvePenalty?, for id: Solve.ID) -> Bool {
+        guard started == nil, let index = solves.firstIndex(where: { $0.id == id }) else { return false }
         cancelPress()
         var updated = solves
-        updated[0].penalty = solve.penalty == penalty ? nil : penalty
-        if save(updated) { solves = updated }
+        updated[index].penalty = penalty
+        guard save(updated) else { return false }
+        solves = updated
+        return true
     }
 
     func deleteLastSolve() {
-        guard started == nil, lastSolve != nil else { return }
-        cancelPress()
-        let updated = Array(solves.dropFirst())
-        if save(updated) {
-            solves = updated
-            lastSolveID = nil
-        }
+        guard let lastSolve else { return }
+        deleteSolve(lastSolve.id)
     }
 
-    private func save(_ results: [Solve]) -> Bool {
+    @discardableResult
+    func deleteSolve(_ id: Solve.ID) -> Bool {
+        deleteSolves([id])
+    }
+
+    @discardableResult
+    func deleteSolves(_ ids: Set<Solve.ID>) -> Bool {
+        guard started == nil, !ids.isEmpty, solves.contains(where: { ids.contains($0.id) }) else { return false }
+        cancelPress()
+        let updated = solves.filter { !ids.contains($0.id) }
+        guard save(updated) else { return false }
+        solves = updated
+        if let lastSolveID, ids.contains(lastSolveID) { self.lastSolveID = nil }
+        return true
+    }
+
+    private func save(_ results: [Solve], groups: [SolveGroup]? = nil) -> Bool {
         do {
-            try JSONEncoder().encode(results).write(to: storage, options: .atomic)
+            try JSONEncoder().encode(ResultsStore(solves: results, groups: groups ?? self.groups)).write(to: storage, options: .atomic)
             return true
         } catch {
             self.error = AppLanguage.saved.text("成绩保存失败：", "Could not save results: ") + error.localizedDescription
@@ -401,5 +579,16 @@ enum ScrambleCatalog {
         let choices = isTraining ? training : standard
         let saved = UserDefaults.standard.string(forKey: key) ?? ""
         return choices.contains(where: { $0.id == saved }) ? saved : (isTraining ? "333.pll" : "333")
+    }
+}
+
+enum SolveAverage {
+    static func value(_ solves: [Solve], count: Int) -> Double? {
+        guard count >= 5, solves.count >= count else { return nil }
+        let sorted = solves.prefix(count).map { $0.resultSeconds ?? .infinity }.sorted()
+        let trim = Int(ceil(Double(count) * 0.05))
+        let kept = sorted.dropFirst(trim).dropLast(trim)
+        guard kept.allSatisfy(\.isFinite) else { return nil }
+        return kept.reduce(0, +) / Double(kept.count)
     }
 }

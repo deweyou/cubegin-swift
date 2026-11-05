@@ -5,6 +5,17 @@ import Cubegin
 
 struct Scramble: Sendable { let algorithm: String; let svg: String }
 enum Engine {
+    static func diagram(event: String, algorithm: String) async throws -> String {
+        try await Task.detached(priority: .userInitiated) {
+#if canImport(Cubegin)
+            let baseEvent = String(event.split(separator: ".")[0])
+            return try evaluateEvent(event: baseEvent, algorithm: algorithm).svg
+#else
+            throw EngineError.sdkMissing
+#endif
+        }.value
+    }
+
     static func scramble(event: String) async throws -> Scramble {
         try await Task.detached(priority: .userInitiated) {
 #if canImport(Cubegin)
