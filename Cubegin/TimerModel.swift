@@ -1,11 +1,30 @@
 import SwiftUI
 
+enum SolvePenalty: String, Codable { case plusTwo, dnf }
+
 struct Solve: Codable, Identifiable {
     var id = UUID()
     let seconds: Double
     let event: String
     let scramble: String
     var date = Date()
+    var penalty: SolvePenalty?
+
+    var resultSeconds: Double? {
+        switch penalty {
+        case .plusTwo: seconds + 2
+        case .dnf: nil
+        case nil: seconds
+        }
+    }
+
+    @MainActor var resultText: String {
+        switch penalty {
+        case .plusTwo: TimerModel.format(seconds + 2) + "+"
+        case .dnf: "DNF"
+        case nil: TimerModel.format(seconds)
+        }
+    }
 }
 enum TimerInput { case touch, keyboard }
 
@@ -32,10 +51,15 @@ enum TimerInput { case touch, keyboard }
     @ObservationIgnored private var heldInput: TimerInput?
     @ObservationIgnored private var readyAt: ContinuousClock.Instant?
     @ObservationIgnored private var readinessTask: Task<Void, Never>?
-    var elapsed = 0.0
-    var solves: [Solve] = []
-    private let storage = URL.documentsDirectory.appending(path: "solves.json")
-    init() {
+    private(set) var solves: [Solve] = []
+    private var lastSolveID: Solve.ID?
+    var lastSolve: Solve? {
+        guard let solve = solves.first, solve.id == lastSolveID else { return nil }
+        return solve
+    }
+    private let storage: URL
+    init(storage: URL = URL.documentsDirectory.appending(path: "solves.json")) {
+        self.storage = storage
         do { solves = try JSONDecoder().decode([Solve].self, from: Data(contentsOf: storage)) }
         catch { if FileManager.default.fileExists(atPath: storage.path) { self.error = AppLanguage.saved.text("成绩读取失败：", "Could not load results: ") + error.localizedDescription } }
     }
@@ -73,6 +97,7 @@ enum TimerInput { case touch, keyboard }
         let now = ContinuousClock.now
         cancelPress()
         if now >= readyAt, scramble != nil, !busy {
+            lastSolveID = nil
             started = now
         }
     }
@@ -98,6 +123,7 @@ enum TimerInput { case touch, keyboard }
             stop()
         } else if scramble != nil, !busy {
             cancelPress()
+            lastSolveID = nil
             started = .now
         }
     }
@@ -105,13 +131,43 @@ enum TimerInput { case touch, keyboard }
     private func stop() {
         guard let start = started else { return }
         let duration = start.duration(to: .now)
-        elapsed = Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+        let seconds = Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+        let solve = Solve(seconds: seconds, event: event, scramble: scramble?.algorithm ?? "")
         started = nil
-        solves.insert(Solve(seconds: elapsed, event: event, scramble: scramble?.algorithm ?? ""), at: 0)
-        do { try JSONEncoder().encode(solves).write(to: storage, options: .atomic) }
-        catch { self.error = AppLanguage.saved.text("成绩保存失败：", "Could not save results: ") + error.localizedDescription }
+        lastSolveID = solve.id
+        solves.insert(solve, at: 0)
+        _ = save(solves)
         Task { await refresh() }
     }
+
+    func togglePenalty(_ penalty: SolvePenalty) {
+        guard started == nil, let solve = lastSolve else { return }
+        cancelPress()
+        var updated = solves
+        updated[0].penalty = solve.penalty == penalty ? nil : penalty
+        if save(updated) { solves = updated }
+    }
+
+    func deleteLastSolve() {
+        guard started == nil, lastSolve != nil else { return }
+        cancelPress()
+        let updated = Array(solves.dropFirst())
+        if save(updated) {
+            solves = updated
+            lastSolveID = nil
+        }
+    }
+
+    private func save(_ results: [Solve]) -> Bool {
+        do {
+            try JSONEncoder().encode(results).write(to: storage, options: .atomic)
+            return true
+        } catch {
+            self.error = AppLanguage.saved.text("成绩保存失败：", "Could not save results: ") + error.localizedDescription
+            return false
+        }
+    }
+
     static func format(_ time: Double) -> String {
         displayParts(time).joined()
     }

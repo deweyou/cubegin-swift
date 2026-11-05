@@ -9,10 +9,12 @@ struct ContentView: View {
     @State private var idlePageFrame: CGRect?
     private var isTiming: Bool { model.started != nil }
     @State private var showsProjectList = false
+    @State private var solveToDelete: Solve?
     @Environment(\.locale) private var locale
     private var language: AppLanguage { locale.appLanguage }
     private let controlIconSize: CGFloat = 20
     private let controlRowHeight: CGFloat = 44
+    private let compactControlSize: CGFloat = 32
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @ScaledMetric(relativeTo: .footnote) private var standardMegaminxFontSize: CGFloat = 14
     @ScaledMetric(relativeTo: .title3) private var scrambleFontSize: CGFloat = 20
@@ -56,7 +58,7 @@ struct ContentView: View {
         .focusEffectDisabled()
         .focused($hasTimerKeyboardFocus)
         .onKeyPress(.space, phases: [.down, .up, .repeat]) { press in
-            guard isTimerActive, !showsProjectList else { return .ignored }
+            guard isTimerActive, !showsProjectList, solveToDelete == nil else { return .ignored }
             switch press.phase {
             case .down: model.press(.keyboard, delayTenths: startDelayTenths)
             case .up: model.release(.keyboard)
@@ -71,6 +73,16 @@ struct ContentView: View {
         .onChange(of: showsProjectList) { _, isShowing in
             if isShowing { model.cancelPress() }
             else if isTimerActive { hasTimerKeyboardFocus = true }
+        }
+        .alert(language.text("确定删除这条成绩吗？", "Delete this solve?"), isPresented: Binding(
+            get: { solveToDelete != nil },
+            set: { if !$0 { solveToDelete = nil } }
+        ), presenting: solveToDelete) { solve in
+            Button(language.text("取消", "Cancel"), role: .cancel) {}
+            Button(language.text("删除", "Delete"), role: .destructive) {
+                guard model.lastSolve?.id == solve.id else { return }
+                model.deleteLastSolve()
+            }
         }
         .onChange(of: hasTimerKeyboardFocus) { _, focused in
             if !focused { model.cancelPress(.keyboard) }
@@ -113,12 +125,13 @@ struct ContentView: View {
         let formulaHeight = max(1, min(height * 0.3,
             height / 2 - timerNumberHeight / 2 - controlsHeight - controlSpacing - topClearance - 8))
         let summaryWidth = max(0, (contentWidth - 12) / 3.2)
-        let diagramHeight = max(0, min(180, height / 2 - timerNumberHeight / 2 - 68))
+        let diagramClearance: CGFloat = model.lastSolve == nil ? 68 : max(68, 14 + compactControlSize + diagramBottomPadding + 8)
+        let diagramHeight = max(0, min(180, height / 2 - timerNumberHeight / 2 - diagramClearance))
 
         return ZStack {
             TimerTouchSurface(
                 onDown: {
-                    guard isTimerActive, !showsProjectList else { return }
+                    guard isTimerActive, !showsProjectList, solveToDelete == nil else { return }
                     model.press(.touch, delayTenths: startDelayTenths)
                 },
                 onUp: { model.release(.touch) },
@@ -177,7 +190,6 @@ struct ContentView: View {
             timerDisplay(fontSize: timerFontSize, numberHeight: timerNumberHeight)
                 .frame(width: max(1, min(timerFrame.width, 880) - 48))
                 .offset(x: timerFrame.midX - frame.midX, y: timerFrame.midY - frame.midY)
-                .allowsHitTesting(false)
         }
         .frame(height: height)
         .padding(.horizontal, 24)
@@ -191,23 +203,69 @@ struct ContentView: View {
     private func timerDisplay(fontSize: CGFloat, numberHeight: CGFloat) -> some View {
         VStack(spacing: 14) {
             // Mirror the reserved action row so the digits stay centered.
-            Color.clear.frame(height: 44)
+            Color.clear.frame(height: compactControlSize)
             TimelineView(.animation(minimumInterval: 0.03, paused: !isTiming)) { _ in
                 let duration = model.started.map { $0.duration(to: .now) }
-                let seconds = duration.map { Double($0.components.seconds) + Double($0.components.attoseconds) / 1e18 } ?? model.elapsed
-                Text(timerReadout(seconds, fontSize: fontSize))
+                let solve = model.lastSolve
+                let seconds = duration.map { Double($0.components.seconds) + Double($0.components.attoseconds) / 1e18 } ?? solve?.resultSeconds ?? 0
+                let readout = solve?.penalty == .dnf
+                    ? AttributedString("DNF", attributes: AttributeContainer.font(.system(size: fontSize, design: .rounded)))
+                    : timerReadout(seconds, fontSize: fontSize)
+                Text(readout)
                     .foregroundStyle(model.isReady ? Color.green : Color.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
                     .padding(.horizontal, 12)
                     .frame(height: numberHeight)
                     .accessibilityLabel(isTiming ? language.text("停止计时", "Stop timer") : language.text("开始计时", "Start timer"))
-                    .accessibilityValue(TimerModel.format(seconds))
+                    .accessibilityValue(solve?.resultText ?? TimerModel.format(seconds))
                     .accessibilityAddTraits(.isButton)
                     .accessibilityAction { model.activateAccessibleTimer() }
             }
-            Color.clear.frame(height: 44)
+            .allowsHitTesting(false)
+
+            Group {
+                if !isTiming, let solve = model.lastSolve {
+                    HStack(spacing: 10) {
+                        penaltyButton("+2", label: language.text("加两秒", "Add two seconds"), penalty: .plusTwo, selected: solve.penalty)
+                        penaltyButton("DNF", label: language.text("标记成绩无效", "Mark as did not finish"), penalty: .dnf, selected: solve.penalty)
+                        Button(role: .destructive) {
+                            model.cancelPress()
+                            solveToDelete = solve
+                        } label: {
+                            Image(systemName: "trash")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 16, height: 16)
+                                .foregroundStyle(Color.secondary)
+                                .modifier(CompactControlTarget(size: compactControlSize))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(language.text("删除这条成绩", "Delete this solve"))
+                    }
+                } else {
+                    Color.clear
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(height: compactControlSize)
         }
+    }
+
+    private func penaltyButton(_ title: String, label: String, penalty: SolvePenalty, selected: SolvePenalty?) -> some View {
+        Button {
+            model.togglePenalty(penalty)
+        } label: {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .foregroundStyle(selected == penalty ? Color.accentColor : Color.secondary)
+                .modifier(CompactControlTarget(size: compactControlSize))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(selected == penalty ? .isSelected : [])
     }
 
     private func timerReadout(_ seconds: Double, fontSize: CGFloat) -> AttributedString {
@@ -373,8 +431,7 @@ struct ContentView: View {
                 .scaledToFit()
                 .frame(width: controlIconSize, height: controlIconSize)
                 .foregroundStyle(model.mode == .training ? Color.accentColor : Color.secondary)
-                .frame(width: 32, height: 32)
-                .contentShape(Rectangle())
+                .modifier(CompactControlTarget(size: compactControlSize))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(language.text("训练模式", "Training"))
@@ -382,6 +439,16 @@ struct ContentView: View {
         .accessibilityAddTraits(model.mode == .training ? .isSelected : [])
         .accessibilityHint(language.text("切换标准打乱与训练打乱", "Switch between standard and training scrambles"))
         .frame(minHeight: controlRowHeight)
+    }
+}
+
+private struct CompactControlTarget: ViewModifier {
+    let size: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .frame(width: size, height: size)
+            .contentShape(Rectangle())
     }
 }
 

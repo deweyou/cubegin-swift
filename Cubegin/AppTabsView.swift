@@ -95,7 +95,10 @@ private struct ResultsView: View {
                         NavigationLink {
                             Form {
                                 Section {
-                                    LabeledContent(language.text("成绩", "Time"), value: TimerModel.format(solve.seconds))
+                                    LabeledContent(language.text("成绩", "Time"), value: solve.resultText)
+                                    if solve.penalty != nil {
+                                        LabeledContent(language.text("原始计时", "Original time"), value: TimerModel.format(solve.seconds))
+                                    }
                                     LabeledContent(language.text("项目", "Event"), value: eventName(solve.event))
                                     LabeledContent(language.text("日期", "Date"), value: solve.date.formatted(.dateTime.year().month(.abbreviated).day().hour().minute().second().locale(locale)))
                                 }
@@ -108,7 +111,7 @@ private struct ResultsView: View {
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 5) {
-                                    Text(TimerModel.format(solve.seconds)).font(.title3.monospacedDigit().weight(.medium))
+                                    Text(solve.resultText).font(.title3.monospacedDigit().weight(.medium))
                                     Text(solve.date.formatted(.dateTime.year().month(.abbreviated).day().hour().minute().locale(locale))).font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
