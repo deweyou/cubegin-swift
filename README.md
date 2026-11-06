@@ -9,6 +9,13 @@ Open `Cubegin.xcodeproj`, select **CubeginApp** and an iPhone/iPad simulator.
 For a physical device, select a development team in Signing & Capabilities.
 Building the app requires Xcode only; no core checkout, Rust or Node is needed.
 
+## Tests and CI
+
+Run the **CubeginApp** scheme’s Test action on an iOS simulator to execute
+the App’s unit and XCUITest suites. [App checks](.github/workflows/check.yml) builds the Release
+app for iOS, runs both suites in an iOS simulator, and runs the bundled SDK’s
+SwiftPM consumer tests. See [testing](docs/testing.md) for commands and test coverage.
+
 ## Upgrade the installed SDK
 
 In a core checkout run `cargo xtask build-sdk ios`. Verify the checksum of

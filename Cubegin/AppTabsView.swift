@@ -6,7 +6,19 @@ struct AppTabsView: View {
     private var language: AppLanguage { locale.appLanguage }
 
     var isActive: Bool
-    @State private var model = TimerModel()
+    @State private var model = TimerModel(storage: Self.resultsStorage)
+
+    private static var resultsStorage: URL {
+#if DEBUG
+        // A UI test uses the same temporary file across both app launches.
+        if let value = ProcessInfo.processInfo.environment["CUBEGIN_UI_TEST_SESSION"],
+           let session = UUID(uuidString: value) {
+            return URL.temporaryDirectory.appending(path: "ui-test-solves-\(session.uuidString).json")
+        }
+#endif
+        return URL.documentsDirectory.appending(path: "solves.json")
+    }
+
     @State private var selection = Destination.home
     @Environment(\.scenePhase) private var scenePhase
 
@@ -913,6 +925,7 @@ private struct SolveDetailsView: View {
                 }
                 Section {
                     Text(solve.scramble)
+                        .accessibilityIdentifier("solve-detail.scramble")
                         .font(.system(.body, design: .monospaced))
                         .textSelection(.enabled)
                     ZStack {

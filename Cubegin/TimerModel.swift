@@ -59,11 +59,11 @@ enum TimerInput { case touch, keyboard }
     static let startDelayKey = "timer.startDelayTenths"
     static let defaultStartDelayTenths = 2
     var mode = ScrambleMode.standard
-    var standardEvent = ScrambleCatalog.restored("scramble.standard", training: false) {
-        didSet { UserDefaults.standard.set(standardEvent, forKey: "scramble.standard") }
+    var standardEvent: String {
+        didSet { defaults.set(standardEvent, forKey: "scramble.standard") }
     }
-    var trainingEvent = ScrambleCatalog.restored("scramble.training", training: true) {
-        didSet { UserDefaults.standard.set(trainingEvent, forKey: "scramble.training") }
+    var trainingEvent: String {
+        didSet { defaults.set(trainingEvent, forKey: "scramble.training") }
     }
     var event: String { mode == .standard ? standardEvent : trainingEvent }
     var eventSelection: String {
@@ -101,8 +101,22 @@ enum TimerInput { case touch, keyboard }
         return solve
     }
     private let storage: URL
-    init(storage: URL = URL.documentsDirectory.appending(path: "solves.json")) {
+    private let defaults: UserDefaults
+    private let now: () -> ContinuousClock.Instant
+    private let generateScramble: @Sendable (String) async throws -> Scramble
+
+    init(
+        storage: URL = URL.documentsDirectory.appending(path: "solves.json"),
+        defaults: UserDefaults = .standard,
+        now: @escaping () -> ContinuousClock.Instant = { .now },
+        generateScramble: @escaping @Sendable (String) async throws -> Scramble = Engine.scramble
+    ) {
         self.storage = storage
+        self.defaults = defaults
+        self.now = now
+        self.generateScramble = generateScramble
+        self.standardEvent = ScrambleCatalog.restored("scramble.standard", training: false, defaults: defaults)
+        self.trainingEvent = ScrambleCatalog.restored("scramble.training", training: true, defaults: defaults)
         do {
             let data = try Data(contentsOf: storage)
             if let store = try? JSONDecoder().decode(ResultsStore.self, from: data) {
@@ -245,14 +259,14 @@ enum TimerInput { case touch, keyboard }
         scramble = nil
         busy = true
         let event = self.event
-        generationTask = Task { [weak self] in
+        generationTask = Task { [weak self, generateScramble] in
             do {
                 let generated: Scramble
                 if let prefetched, let result = try? await prefetched.value {
                     generated = result
                 } else {
                     try Task.checkCancellation()
-                    generated = try await Engine.scramble(event: event)
+                    generated = try await generateScramble(event)
                 }
                 guard !Task.isCancelled, let self, self.event == event else { return }
                 self.scramble = generated
@@ -271,8 +285,8 @@ enum TimerInput { case touch, keyboard }
         started = instant
         guard prefetchTask == nil else { return }
         let event = self.event
-        prefetchTask = Task { [weak self] in
-            let generated = try await Engine.scramble(event: event)
+        prefetchTask = Task { [weak self, generateScramble] in
+            let generated = try await generateScramble(event)
             try Task.checkCancellation()
             if let self, self.event == event, self.started != nil {
                 self.nextScramble = generated
@@ -289,7 +303,7 @@ enum TimerInput { case touch, keyboard }
         guard heldInput == nil, scramble != nil, !busy else { return }
         heldInput = input
         let delay = Duration.milliseconds(min(20, max(0, delayTenths)) * 100)
-        let deadline = ContinuousClock.now.advanced(by: delay)
+        let deadline = now().advanced(by: delay)
         readyAt = deadline
         if delay == .zero {
             isReady = true
@@ -305,7 +319,7 @@ enum TimerInput { case touch, keyboard }
 
     func release(_ input: TimerInput) {
         guard heldInput == input, let readyAt else { return }
-        let now = ContinuousClock.now
+        let now = now()
         cancelPress()
         if now >= readyAt, scramble != nil, !busy {
             start(at: now)
@@ -336,13 +350,13 @@ enum TimerInput { case touch, keyboard }
             stop()
         } else if scramble != nil, !busy {
             cancelPress()
-            start(at: .now)
+            start(at: now())
         }
     }
 
     private func stop() {
         guard let start = started else { return }
-        let duration = start.duration(to: .now)
+        let duration = start.duration(to: now())
         let seconds = Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
         let solve = Solve(seconds: seconds, event: event, scramble: scramble?.algorithm ?? "", groupID: currentGroup?.id)
         started = nil
@@ -579,9 +593,9 @@ enum ScrambleCatalog {
             .replacingOccurrences(of: "3-generator ", with: "")
             .replacingOccurrences(of: "Roux-generator ", with: "")
     }
-    static func restored(_ key: String, training isTraining: Bool) -> String {
+    static func restored(_ key: String, training isTraining: Bool, defaults: UserDefaults) -> String {
         let choices = isTraining ? training : standard
-        let saved = UserDefaults.standard.string(forKey: key) ?? ""
+        let saved = defaults.string(forKey: key) ?? ""
         return choices.contains(where: { $0.id == saved }) ? saved : (isTraining ? "333.pll" : "333")
     }
 }

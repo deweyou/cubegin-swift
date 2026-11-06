@@ -243,6 +243,7 @@ struct ContentView: View {
                     .frame(height: numberHeight)
                     .accessibilityLabel(isTiming ? language.text("停止计时", "Stop timer") : language.text("开始计时", "Start timer"))
                     .accessibilityValue(solve?.resultText ?? TimerModel.format(seconds))
+                    .accessibilityIdentifier("timer.readout")
                     .accessibilityAddTraits(.isButton)
                     .accessibilityAction { model.activateAccessibleTimer() }
             }
@@ -289,6 +290,7 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+        .accessibilityIdentifier("timer.penalty.\(penalty.rawValue)")
         .accessibilityAddTraits(selected == penalty ? .isSelected : [])
     }
 
@@ -323,6 +325,7 @@ struct ContentView: View {
         return ViewThatFits(in: .vertical) {
             ForEach(sizes, id: \.self) { size in
                 Text(algorithm)
+                    .accessibilityIdentifier(model.scramble == nil ? "timer.placeholder" : "timer.scramble")
                     .font(.system(size: size, design: .monospaced))
                     .multilineTextAlignment(.center)
                     .lineSpacing((preservesMegaminxRows ? 4 : 7) * size / fontSize)

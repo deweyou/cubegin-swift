@@ -1,0 +1,50 @@
+name: App checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    name: iOS build and tests
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify build environment
+        run: |
+          test "$(uname -m)" = arm64
+          xcodebuild -version
+      - name: Build Release app for iOS
+        run: |
+          xcodebuild -project Cubegin.xcodeproj -scheme CubeginApp \
+            -destination 'generic/platform=iOS' -configuration Release \
+            -derivedDataPath DerivedData/release CODE_SIGNING_ALLOWED=NO build
+      - name: Run App unit and UI tests
+        run: |
+          xcodebuild -project Cubegin.xcodeproj -scheme CubeginApp \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.2' \
+            -derivedDataPath DerivedData/app-tests \
+            -resultBundlePath DerivedData/AppTests.xcresult \
+            -parallel-testing-enabled NO CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES test
+      - name: Run bundled SDK consumer tests
+        run: swift test --package-path Vendor/CubeginSDK --scratch-path DerivedData/sdk-tests
+      - name: Upload App test results
+        if: ${{ !cancelled() && hashFiles('DerivedData/AppTests.xcresult/Info.plist') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-test-results
+          path: DerivedData/AppTests.xcresult
+          retention-days: 14
