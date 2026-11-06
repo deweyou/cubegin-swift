@@ -17,10 +17,10 @@ concurrency:
 jobs:
   ios:
     name: iOS build and tests
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
     env:
-      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
       - name: Verify build environment
@@ -32,10 +32,22 @@ jobs:
           xcodebuild -project Cubegin.xcodeproj -scheme CubeginApp \
             -destination 'generic/platform=iOS' -configuration Release \
             -derivedDataPath DerivedData/release CODE_SIGNING_ALLOWED=NO build
+      - name: Boot iPhone simulator
+        id: simulator
+        timeout-minutes: 5
+        run: |
+          simulator_id="$(xcrun simctl create 'Cubegin CI' \
+            com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro \
+            com.apple.CoreSimulator.SimRuntime.iOS-26-5)"
+          xcrun simctl bootstatus "$simulator_id" -b
+          echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
       - name: Run App unit and UI tests
+        timeout-minutes: 10
+        env:
+          SIMULATOR_ID: ${{ steps.simulator.outputs.id }}
         run: |
           xcodebuild -project Cubegin.xcodeproj -scheme CubeginApp \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.2' \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
             -derivedDataPath DerivedData/app-tests \
             -resultBundlePath DerivedData/AppTests.xcresult \
             -parallel-testing-enabled NO CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES test
