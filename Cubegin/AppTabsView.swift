@@ -1,6 +1,5 @@
 import SwiftUI
 import UIKit
-import Charts
 
 struct AppTabsView: View {
     @Environment(\.locale) private var locale
@@ -60,13 +59,13 @@ struct AppTabsView: View {
 
 }
 
-// Fixed-size image assets keep the native tab bar from overriding symbol point sizes.
+// Fixed-size images keep native bars from overriding symbol point sizes.
 @MainActor private enum NavigationIcons {
     static let results = icon("list.bullet")
     static let settings = icon("gearshape")
+    static let solveDetailDelete = icon("trash", side: 20)
 
-    private static func icon(_ name: String) -> UIImage {
-        let side: CGFloat = 28
+    private static func icon(_ name: String, side: CGFloat = 28) -> UIImage {
         let configuration = UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)
         guard let symbol = UIImage(systemName: name, withConfiguration: configuration) else { return UIImage() }
         let scale = min(side / symbol.size.width, side / symbol.size.height)
@@ -87,18 +86,34 @@ private enum ResultsPage: String, CaseIterable, Identifiable {
         switch self {
         case .solves: language.text("成绩", "Results")
         case .averages: language.text("平均", "Averages")
-        case .statistics: language.text("统计", "Statistics")
-        case .chart: language.text("统计图", "Charts")
+        case .statistics: language.text("概要", "Overview")
+        case .chart: language.text("图表", "Charts")
         }
     }
 }
 
+private struct AverageDestination: Hashable {
+    let kind: SolveAverage
+    let newestSolveID: Solve.ID
+}
+
+private struct AverageHighlightInput: Equatable {
+    let kind: SolveAverage
+    let times: [Double?]
+    let includesDNF: Bool
+}
+
 private struct ResultsView: View {
+    @AppStorage(ResultExtremes.includeDNFPreferenceKey) private var includesDNFInWorst = ResultExtremes.defaultIncludesDNF
     @Environment(\.locale) private var locale
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @ScaledMetric(relativeTo: .caption) private var averageSolveTileWidth = 104.0
     private var language: AppLanguage { locale.appLanguage }
     @Bindable var model: TimerModel
-    @State private var detailPath: [Solve.ID] = []
+    @State private var detailPath = NavigationPath()
+    @State private var averageKind = SolveAverage.mo3
+    @State private var averageHighlights: (input: AverageHighlightInput, extremes: ResultExtremes)?
     @State private var showsProjects = false
     @State private var page = ResultsPage.solves
     @State private var showsGroups = false
@@ -109,12 +124,11 @@ private struct ResultsView: View {
     private var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
     private var usesTopNavigation: Bool { isPad && horizontalSizeClass == .regular }
     private var results: [Solve] {
-        model.groupSolves.sorted {
-            $0.date == $1.date ? $0.id.uuidString < $1.id.uuidString : $0.date > $1.date
-        }
+        model.groupSolves.sorted(by: Solve.newestFirst)
     }
 
     var body: some View {
+        let groupSolves = model.groupSolves
         NavigationStack(path: $detailPath) {
             VStack(spacing: 0) {
                 VStack(spacing: 0) {
@@ -152,7 +166,7 @@ private struct ResultsView: View {
                 .padding(.top, 8)
                 .frame(maxWidth: usesTopNavigation ? .infinity : 880)
 
-                if results.isEmpty {
+                if page != .statistics && groupSolves.isEmpty {
                     VStack(spacing: 12) {
                         Image(systemName: "stopwatch")
                             .font(.system(size: 36, weight: .regular))
@@ -164,12 +178,15 @@ private struct ResultsView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    pageContent
+                    pageContent(groupSolves: groupSolves)
                 }
             }
             .appBackground()
             .navigationDestination(for: Solve.ID.self) { id in
                 SolveDetailsView(model: model, solveID: id)
+            }
+            .navigationDestination(for: AverageDestination.self) { destination in
+                averageDetails(destination)
             }
             .toolbar(isSelecting ? .hidden : .automatic, for: .tabBar)
             .safeAreaPadding(.bottom, isSelecting ? 72 : 0)
@@ -260,20 +277,30 @@ private struct ResultsView: View {
     }
 
     private func pickerLabel(_ title: String) -> some View {
-        Text(title)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .font(.subheadline.weight(.medium))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 4)
-            .frame(minHeight: 24)
+        HStack(spacing: 6) {
+            Text(title)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Image(systemName: "chevron.right")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+        }
+        .font(.subheadline.weight(.medium))
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 4)
+        .frame(minHeight: 24)
     }
 
-    @ViewBuilder private var pageContent: some View {
+    @ViewBuilder private func pageContent(groupSolves: [Solve]) -> some View {
         switch page {
         case .solves:
             let orderedResults = results
+            let extremes = orderedResults.enumerated().reduce(into: ResultExtremes(includesDNF: includesDNFInWorst)) { extremes, entry in
+                extremes.record(entry.element.resultSeconds, at: entry.offset)
+            }
             List(Array(orderedResults.enumerated()), id: \.element.id) { index, solve in
+                let highlight = resultHighlight(at: index, best: extremes.best, worst: extremes.worst)
                 Group {
                     if isSelecting {
                         Button {
@@ -281,13 +308,13 @@ private struct ResultsView: View {
                                 selectedSolveIDs.remove(solve.id)
                             }
                         } label: {
-                            solveRowLabel(solve, number: orderedResults.count - index, total: orderedResults.count)
+                            solveRowLabel(solve, number: orderedResults.count - index, total: orderedResults.count, highlight: highlight)
                         }
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(selectedSolveIDs.contains(solve.id) ? .isSelected : [])
                     } else {
                         NavigationLink(value: solve.id) {
-                            solveRowLabel(solve, number: orderedResults.count - index, total: orderedResults.count)
+                            solveRowLabel(solve, number: orderedResults.count - index, total: orderedResults.count, highlight: highlight)
                         }
                         .accessibilityAction(named: Text(language.text("多选", "Select multiple"))) {
                             selectedSolveIDs = [solve.id]
@@ -335,77 +362,262 @@ private struct ResultsView: View {
                 Text(language.text("删除后，成绩无法恢复。", "Deleted solves cannot be recovered."))
             }
         case .averages:
-            List(Array(results.enumerated()), id: \.element.id) { index, solve in
-                let window = Array(results.dropFirst(index).prefix(12))
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(solve.date.formatted(.dateTime.month().day().hour().minute().locale(locale)))
-                        .font(.caption).foregroundStyle(.secondary)
-                    HStack {
-                        LabeledContent("Ao5", value: averageText(window, count: 5))
-                        Spacer(minLength: 20)
-                        LabeledContent("Ao12", value: averageText(window, count: 12))
-                    }
-                    .monospacedDigit()
-                }
-                .padding(.vertical, 4)
-                .listRowBackground(Color.clear)
-            }
-            .listStyle(.plain)
+            averagesView
         case .statistics:
-            Form {
-                Section {
-                    LabeledContent(language.text("总次数", "Attempts"), value: "\(results.count)")
-                    LabeledContent(language.text("有效成绩", "Finished"), value: "\(results.filter { $0.resultSeconds != nil }.count)")
-                    LabeledContent("DNF", value: "\(results.filter { $0.penalty == .dnf }.count)")
-                }
-                Section {
-                    LabeledContent(language.text("最佳单次", "Best single"), value: timeText(results.compactMap(\.resultSeconds).min()))
-                    LabeledContent(language.text("有效成绩均值", "Mean of finished solves"), value: meanText)
-                    LabeledContent(language.text("最佳 Ao5", "Best Ao5"), value: bestAverage(5))
-                    LabeledContent(language.text("最佳 Ao12", "Best Ao12"), value: bestAverage(12))
-                }
-            }
+            ResultsOverview(solves: results)
         case .chart:
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text(language.text("单次成绩趋势", "Solve times")).font(.headline)
-                    Chart(Array(results.reversed().enumerated()), id: \.element.id) { index, solve in
-                        if let seconds = solve.resultSeconds {
-                            LineMark(x: .value(language.text("次数", "Attempt"), index + 1),
-                                     y: .value(language.text("秒", "Seconds"), seconds))
-                            PointMark(x: .value(language.text("次数", "Attempt"), index + 1),
-                                      y: .value(language.text("秒", "Seconds"), seconds))
+            ResultsCharts(solves: groupSolves)
+                .id(model.currentGroup?.id)
+        }
+    }
+
+    private var averagesView: some View {
+        let orderedResults = results
+        let availableKinds = SolveAverage.allCases.filter { $0.count <= orderedResults.count }
+        let selectedKind = availableKinds.contains(averageKind) ? averageKind : availableKinds.first
+        return Group {
+            if let kind = selectedKind {
+                let input = AverageHighlightInput(kind: kind, times: orderedResults.map(\.resultSeconds), includesDNF: includesDNFInWorst)
+                let extremes = averageHighlights?.input == input ? averageHighlights?.extremes : nil
+                VStack(spacing: 0) {
+                    ScrollViewReader { scroll in
+                        ScrollView(.horizontal) {
+                            HStack(spacing: 8) {
+                                ForEach(availableKinds, id: \.self) { option in
+                                    let isSelected = option == kind
+                                    Button {
+                                        averageKind = option
+                                    } label: {
+                                        Text(option.title)
+                                            .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                                            .foregroundStyle(isSelected ? .primary : .secondary)
+                                            .fixedSize()
+                                            .padding(.horizontal, 11)
+                                            .padding(.vertical, 6)
+                                            .frame(minWidth: 44)
+                                            .background(isSelected ? Color.primary.opacity(0.08) : .clear, in: Capsule())
+                                            .frame(minHeight: 44)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                                    .accessibilityIdentifier("results.average-type.\(option.title)")
+                                    .id(option)
+                                }
+                            }
+                        }
+                        .scrollIndicators(.hidden)
+                        .contentMargins(.horizontal, 24, for: .scrollContent)
+                        .accessibilityLabel(language.text("平均类型", "Average type"))
+                        .accessibilityIdentifier("results.average-types")
+                        .onChange(of: kind, initial: true) { previous, selected in
+                            if previous == selected {
+                                scroll.scrollTo(selected, anchor: .center)
+                            } else {
+                                withAnimation {
+                                    scroll.scrollTo(selected, anchor: .center)
+                                }
+                            }
                         }
                     }
-                    .chartYScale(domain: .automatic(includesZero: false))
-                    .frame(height: 260)
-                    .accessibilityLabel(language.text("当前分组的单次成绩趋势", "Solve times in this group"))
-                    Text(language.text("横轴为计时顺序，纵轴为秒。DNF 保留次数，不绘制用时。", "Attempts run from oldest to newest. DNF attempts have no time point."))
-                        .font(.footnote).foregroundStyle(.secondary)
+                    .frame(maxWidth: 880)
+                    .padding(.top, 4)
+                    .padding(.bottom, 6)
+
+                    List(orderedResults.indices, id: \.self) { index in
+                        let number = orderedResults.count - index
+                        Group {
+                            if number >= kind.count {
+                                let window = orderedResults[index..<(index + kind.count)]
+                                NavigationLink(value: AverageDestination(kind: kind, newestSolveID: orderedResults[index].id)) {
+                                    averageRowLabel(
+                                        number: number,
+                                        total: orderedResults.count,
+                                        summary: kind.summarize(window),
+                                        highlight: resultHighlight(at: index, best: extremes?.best, worst: extremes?.worst)
+                                    )
+                                }
+                            } else {
+                                averageRowLabel(number: number, total: orderedResults.count, summary: nil)
+                            }
+                        }
+                        .listRowInsets(EdgeInsets(top: 0, leading: 24, bottom: 0, trailing: 24))
+                        .listRowBackground(Color.clear)
+                        .accessibilityIdentifier("average-row-\(index)")
+                    }
+                    .listStyle(.plain)
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 24).onEnded { swipe in
+                            let distance = swipe.translation.width
+                            guard abs(distance) >= 48,
+                                  abs(distance) > 1.5 * abs(swipe.translation.height),
+                                  let index = availableKinds.firstIndex(of: kind) else { return }
+                            let next = index + (distance < 0 ? 1 : -1)
+                            guard availableKinds.indices.contains(next) else { return }
+                            averageKind = availableKinds[next]
+                        }
+                    )
+                    .id(kind)
                 }
-                .padding(24)
-                .frame(maxWidth: 880)
+                .task(id: input) {
+                    let extremes = await kind.rollingExtremes(input.times, includesDNF: input.includesDNF)
+                    guard !Task.isCancelled else { return }
+                    averageHighlights = (input, extremes)
+                }
+            } else {
+                ContentUnavailableView(
+                    language.text("成绩不足", "More solves needed"),
+                    systemImage: "stopwatch",
+                    description: Text(language.text("至少需要 3 条成绩才能计算平均。", "Record at least 3 solves to calculate an average."))
+                )
             }
         }
     }
 
-    private func solveRowLabel(_ solve: Solve, number: Int, total: Int) -> some View {
+    private func averageRowLabel(number: Int, total: Int, summary: SolveAverage.Summary?, highlight: (label: String, color: Color)? = nil) -> some View {
+        HStack(spacing: 12) {
+            solveNumberLabel(number, total: total)
+            Text(summary.map(averageScoreText) ?? "N/A")
+                .font(.system(.body, design: .monospaced).weight(.medium))
+                .foregroundStyle(highlight?.color ?? (summary?.mean == nil ? .secondary : .primary))
+                .accessibilityValue(highlight?.label ?? "")
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .layoutPriority(1)
+            Spacer(minLength: 8)
+            if let standardDeviation = summary?.standardDeviation {
+                let deviation = TimerModel.format(standardDeviation)
+                Text("σ \(deviation)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(language.text("标准差", "Standard deviation"))
+                    .accessibilityValue(deviation)
+            }
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+    }
+
+    private func averageDetails(_ destination: AverageDestination) -> some View {
+        let orderedResults = results
+        let kind = destination.kind
+        return Group {
+            if let start = orderedResults.firstIndex(where: { $0.id == destination.newestSolveID }),
+               orderedResults.count - start >= kind.count {
+                let window = orderedResults[start..<(start + kind.count)]
+                let summary = kind.summarize(window)
+                let extremes = window.indices.reduce(into: ResultExtremes(includesDNF: includesDNFInWorst)) { extremes, index in
+                    extremes.record(window[index].resultSeconds, at: index)
+                }
+                let bestSingle = extremes.best.map { window[$0].resultText } ?? "—"
+                let worstSingle = summary.hasDNF ? "DNF" : (extremes.worst.map { window[$0].resultText } ?? "—")
+                GeometryReader { geometry in
+                    let spacing: CGFloat = 8
+                    let availableWidth = geometry.size.width - 32
+                    let columns = max(1, min(5, Int((availableWidth + spacing) / (averageSolveTileWidth + spacing))))
+                    List {
+                        Section {
+                            LabeledContent(language.text("平均成绩", "Average"), value: averageScoreText(summary))
+                            if let standardDeviation = summary.standardDeviation {
+                                LabeledContent("σ", value: TimerModel.format(standardDeviation))
+                                    .accessibilityLabel(language.text("标准差", "Standard deviation"))
+                            }
+                            LabeledContent(language.text("最快单次", "Fastest single"), value: bestSingle)
+                            LabeledContent(language.text("最差单次", "Worst single"), value: worstSingle)
+                        }
+                        .monospacedDigit()
+
+                        Section {
+                            let rowCount = (window.count + columns - 1) / columns
+                            ForEach(0..<rowCount, id: \.self) { row in
+                                HStack(spacing: spacing) {
+                                    ForEach(0..<columns, id: \.self) { column in
+                                        let index = start + row * columns + column
+                                        if index < window.endIndex {
+                                            averageSolveTile(window[index], highlight: resultHighlight(at: index, best: extremes.best, worst: extremes.worst))
+                                                .accessibilityIdentifier("average-solve-\(index - start)")
+                                        } else {
+                                            Color.clear
+                                                .frame(maxWidth: .infinity)
+                                                .accessibilityHidden(true)
+                                        }
+                                    }
+                                }
+                                .listRowInsets(EdgeInsets(top: 3, leading: 16, bottom: 3, trailing: 16))
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                            }
+                        } header: {
+                            Text(language.text("成绩列表", "Solves"))
+                                .padding(.leading, 16)
+                        }
+                        // Inset the tiles inside the section mask to preserve their own corner radius.
+                        .listSectionMargins(.horizontal, 0)
+                    }
+                }
+            } else {
+                ContentUnavailableView(language.text("此平均成绩已不可用", "This average is no longer available"), systemImage: "stopwatch")
+            }
+        }
+        .appBackground()
+        .navigationTitle(kind.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+    }
+
+    private func resultHighlight(at index: Int, best: Int?, worst: Int?) -> (label: String, color: Color)? {
+        if index == best {
+            return (language.text("最快", "Fastest"), resultBestColor(for: colorScheme))
+        }
+        if index == worst {
+            return (language.text("最差", "Worst"), resultWorstColor(for: colorScheme))
+        }
+        return nil
+    }
+
+    private func averageSolveTile(_ solve: Solve, highlight: (label: String, color: Color)?) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 12)
+        return Button {
+            detailPath.append(solve.id)
+        } label: {
+            Text(solve.resultText)
+                .font(.system(.caption, design: .monospaced).weight(.semibold))
+                .foregroundStyle(solve.penalty == .dnf ? .secondary : .primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(highlight?.color.opacity(0.15) ?? .clear, in: shape)
+                .background(Color(uiColor: .secondarySystemGroupedBackground), in: shape)
+                .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(highlight?.label ?? "")
+    }
+
+    private func solveNumberLabel(_ number: Int, total: Int) -> some View {
+        Text("#\(total)")
+            .hidden()
+            .overlay(alignment: .leading) { Text("#\(number)") }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.tertiary)
+            .frame(minWidth: 36, alignment: .leading)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func solveRowLabel(_ solve: Solve, number: Int, total: Int, highlight: (label: String, color: Color)?) -> some View {
         HStack(spacing: 12) {
             if isSelecting {
                 Image(systemName: selectedSolveIDs.contains(solve.id) ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(selectedSolveIDs.contains(solve.id) ? Color.accentColor : Color.secondary)
                     .accessibilityHidden(true)
             }
-            Text("#\(total)")
-                .hidden()
-                .overlay(alignment: .leading) { Text("#\(number)") }
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
-                .frame(minWidth: 36, alignment: .leading)
-                .fixedSize(horizontal: true, vertical: false)
+            solveNumberLabel(number, total: total)
             Text(solve.resultText)
                 .font(.system(.body, design: .monospaced).weight(.medium))
-                .foregroundStyle(solve.penalty == .dnf ? .secondary : .primary)
+                .foregroundStyle(highlight?.color ?? (solve.penalty == .dnf ? .secondary : .primary))
+                .accessibilityValue(highlight?.label ?? "")
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .layoutPriority(1)
@@ -480,20 +692,187 @@ private struct ResultsView: View {
     }
 
     private func timeText(_ time: Double?) -> String { time.map(TimerModel.format) ?? "—" }
-    private func averageText(_ solves: [Solve], count: Int) -> String {
-        guard solves.count >= count else { return "—" }
-        return SolveAverage.value(solves, count: count).map(TimerModel.format) ?? "DNF"
+    private func averageScoreText(_ summary: SolveAverage.Summary) -> String {
+        summary.mean.map(TimerModel.format) ?? "DNF"
     }
-    private var meanText: String {
-        let values = results.compactMap(\.resultSeconds)
-        return values.isEmpty ? "—" : TimerModel.format(values.reduce(0, +) / Double(values.count))
-    }
-    private func bestAverage(_ count: Int) -> String {
-        guard results.count >= count else { return "—" }
-        let values = (0...(results.count - count)).compactMap { index in
-            SolveAverage.value(Array(results[index..<(index + count)]), count: count)
+}
+
+private func resultBestColor(for colorScheme: ColorScheme) -> Color {
+    colorScheme == .dark ? Color(uiColor: .systemGreen) : Color(red: 0.10, green: 0.45, blue: 0.24)
+}
+
+private func resultWorstColor(for colorScheme: ColorScheme) -> Color {
+    colorScheme == .dark ? Color(uiColor: .systemRed) : Color(red: 0.75, green: 0.14, blue: 0.18)
+}
+
+private struct ResultsOverview: View {
+    let solves: [Solve]
+    @Environment(\.locale) private var locale
+    @Environment(\.timeZone) private var timeZone
+    @Environment(\.colorScheme) private var colorScheme
+    @ScaledMetric(relativeTo: .caption) private var dailyColumnWidth = 74.0
+    @State private var bestAverages: (times: [Double?], scores: [SolveAverage: String])?
+    private var language: AppLanguage { locale.appLanguage }
+
+    var body: some View {
+        let times = solves.map(\.resultSeconds)
+        let valid = times.compactMap { $0 }
+        let mean = valid.isEmpty ? nil : valid.reduce(0, +) / Double(valid.count)
+        let singles = times.enumerated().reduce(into: ResultExtremes(includesDNF: false)) { extrema, entry in
+            extrema.record(entry.element, at: entry.offset)
         }
-        return values.min().map(TimerModel.format) ?? "DNF"
+        let availableKinds = SolveAverage.allCases.filter { solves.count >= $0.count }
+        let bestScores = bestAverages?.times == times ? bestAverages?.scores : nil
+
+        Form {
+            Section {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible())], spacing: 16) {
+                    metric(language.text("有效 / 总次数", "Valid / Total"), value: "\(valid.count) / \(solves.count)")
+                    metric(language.text("总平均", "Overall mean"), value: mean.map(TimerModel.format) ?? "—")
+                    metric(language.text("单次最快", "Fastest single"), value: singles.best.map { solves[$0].resultText } ?? "—", color: resultBestColor(for: colorScheme))
+                    metric(language.text("单次最慢", "Slowest single"), value: singles.worst.map { solves[$0].resultText } ?? "—", color: resultWorstColor(for: colorScheme))
+                }
+                .padding(.vertical, 10)
+            }
+
+            if !availableKinds.isEmpty {
+                Section {
+                    Grid(alignment: .trailing, horizontalSpacing: 7, verticalSpacing: 7) {
+                        GridRow {
+                            Color.clear
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 1)
+                                .accessibilityHidden(true)
+                            Text(language.text("当前", "Current"))
+                            Text("/")
+                            Text(language.text("最佳", "Best"))
+                        }
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 3)
+
+                        ForEach(availableKinds, id: \.self) { kind in
+                            let current = averageText(kind, window: solves.prefix(kind.count))
+                            comparisonRow(kind.title, current: current, best: bestScores?[kind] ?? "…")
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+
+            Section {
+                let days = recentDays()
+                if days.isEmpty {
+                    Text(language.text("暂无记录", "No activity yet"))
+                        .foregroundStyle(.secondary)
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        ForEach((1...min(4, days.count)).reversed(), id: \.self) { columns in
+                            dailyGrid(days, columns: columns)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+        }
+        .listSectionSpacing(12)
+        .task(id: times) {
+            var scores: [SolveAverage: String] = [:]
+            for kind in availableKinds {
+                let extrema = await kind.rollingExtremes(times, includesDNF: false)
+                guard !Task.isCancelled else { return }
+                scores[kind] = extrema.best.map { start in
+                    averageText(kind, window: solves[start..<(start + kind.count)])
+                } ?? "DNF"
+            }
+            bestAverages = (times, scores)
+        }
+    }
+
+    private func averageText(_ kind: SolveAverage, window: ArraySlice<Solve>) -> String {
+        kind.summarize(window).mean.map(TimerModel.format) ?? "DNF"
+    }
+
+    private func metric(_ title: String, value: String, color: Color = .primary) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(value)
+                .foregroundStyle(value == "—" ? .secondary : color)
+                .font(.system(.title3, design: .monospaced).weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(value)
+    }
+
+    private func comparisonRow(_ title: String, current: String, best: String) -> some View {
+        GridRow {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(current)
+            Text("/")
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+            Text(best)
+                .foregroundStyle(best == "DNF" || best == "…" ? Color.secondary : resultBestColor(for: colorScheme))
+        }
+        .font(.subheadline.monospacedDigit())
+        .lineLimit(1)
+        .minimumScaleFactor(0.65)
+        .frame(minHeight: 36)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(language.text("当前 \(current)，最佳 \(best)", "Current \(current), best \(best)"))
+    }
+
+    private func dailyGrid(_ days: [(date: Date, count: Int)], columns: Int) -> some View {
+        VStack(spacing: 12) {
+            ForEach(Array(stride(from: 0, to: days.count, by: columns)), id: \.self) { start in
+                HStack(spacing: 8) {
+                    ForEach(days[start..<min(start + columns, days.count)], id: \.date) { day in
+                        VStack(spacing: 4) {
+                            Text(dayLabel(day.date))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                            let count = Text(day.count.formatted(.number.locale(locale)))
+                                .font(.system(.subheadline, design: .monospaced).weight(.medium))
+                            let unit = Text(language.text("次", day.count == 1 ? "solve" : "solves"))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text("\(count) \(unit)")
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                        }
+                        .frame(minWidth: columns == 1 ? 0 : dailyColumnWidth, maxWidth: .infinity)
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+        }
+    }
+
+    private func dayLabel(_ date: Date) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d/%02d/%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+    }
+
+    private func recentDays() -> [(date: Date, count: Int)] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let counts = solves.reduce(into: [Date: Int]()) { counts, solve in
+            counts[calendar.startOfDay(for: solve.date), default: 0] += 1
+        }
+        return counts.keys.sorted(by: >).prefix(8).map { ($0, counts[$0, default: 0]) }
     }
 }
 
@@ -561,7 +940,8 @@ private struct SolveDetailsView: View {
                 Button {
                     confirmsDelete = true
                 } label: {
-                    Image(systemName: "trash").foregroundStyle(.red)
+                    Image(uiImage: NavigationIcons.solveDetailDelete)
+                        .foregroundStyle(.red)
                 }
                 .disabled(model.started != nil || solve == nil)
                 .accessibilityLabel(language.text("删除这条成绩", "Delete this solve"))
@@ -594,7 +974,7 @@ private struct SolveDetailsView: View {
         } label: {
             Text(title)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(solve.penalty == penalty ? Color.accentColor : Color.secondary)
+                .foregroundStyle(solve.penalty == penalty ? Color.accentColor : Color.secondary.opacity(0.8))
                 .frame(width: 44, height: 36)
                 .background(solve.penalty == penalty ? Color.accentColor.opacity(0.12) : Color.clear, in: Capsule())
                 .frame(minHeight: 44)
@@ -941,6 +1321,7 @@ private struct MoveSolvesSheet: View {
                     Text(error).foregroundStyle(.red)
                 }
             }
+            .contentMargins(.top, 0, for: .scrollContent)
             .appBackground()
             .overlay {
                 if destinations.isEmpty {
@@ -1025,6 +1406,7 @@ private struct GroupEditor: View {
 private struct SettingsView: View {
     @AppStorage(AppLanguage.preferenceKey) private var selectedLanguage = AppLanguage.chinese
     @AppStorage(TimerModel.startDelayKey) private var startDelayTenths = TimerModel.defaultStartDelayTenths
+    @AppStorage(ResultExtremes.includeDNFPreferenceKey) private var includesDNFInWorst = ResultExtremes.defaultIncludesDNF
     @Environment(\.locale) private var locale
     private var language: AppLanguage { locale.appLanguage }
 
@@ -1041,6 +1423,10 @@ private struct SettingsView: View {
                         LabeledContent(language.text("启动延迟", "Start delay"),
                                        value: (Double(startDelayTenths) / 10).formatted(.number.precision(.fractionLength(1))) + " s")
                     }
+                }
+                Section(language.text("成绩", "Results")) {
+                    Toggle(language.text("DNF 可标为最差", "Allow DNF as worst"), isOn: $includesDNFInWorst)
+                        .accessibilityIdentifier("settings.results.includeDNFInWorst")
                 }
                 Section(language.text("外观", "Appearance")) {
                     LabeledContent(language.text("主题", "Theme"), value: language.text("跟随系统", "System"))

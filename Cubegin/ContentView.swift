@@ -138,9 +138,15 @@ struct ContentView: View {
         let timerTouchTop = isTiming ? 0 : topClearance + controlsHeight + controlSpacing
         let formulaHeight = max(1, min(height * 0.3,
             height / 2 - timerNumberHeight / 2 - controlsHeight - controlSpacing - topClearance - 8))
-        let summaryWidth = max(0, (contentWidth - 12) / 3.2)
+        let footerSpacing: CGFloat = 12
+        let footerWidth = max(0, contentWidth - footerSpacing)
+        let summaryWidth = min(144, footerWidth * 0.46)
+        let diagramWidth = footerWidth - summaryWidth
         let diagramClearance: CGFloat = model.lastSolve == nil ? 68 : max(68, 14 + compactControlSize + diagramBottomPadding + 8)
         let diagramHeight = max(0, min(180, height / 2 - timerNumberHeight / 2 - diagramClearance))
+
+        let diagramAspectRatio = model.scramble?.diagramAspectRatio ?? (4.0 / 3)
+        let summaryHeight = min(diagramHeight, diagramWidth / CGFloat(diagramAspectRatio))
 
         return ZStack {
             TimerTouchSurface(
@@ -191,15 +197,15 @@ struct ContentView: View {
                 .frame(height: height, alignment: .top)
             }
 
-            HStack(spacing: 12) {
-                // Reserve the leading column for the results summary.
-                Color.clear
-                    .frame(width: summaryWidth, height: diagramHeight)
-                    .accessibilityHidden(true)
+            HStack(alignment: .bottom, spacing: footerSpacing) {
+                if !isTiming && summaryHeight > 0 {
+                    TimerSummary(model: model, height: summaryHeight)
+                        .frame(width: summaryWidth)
+                }
                 SVGView(svg: model.scramble?.svg, nextSVG: model.nextScramble?.svg)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: diagramHeight)
+                    .frame(width: diagramWidth, height: diagramHeight)
                     .accessibilityLabel(language.text("当前打乱状态图", "Current scramble diagram"))
+                    .accessibilityIdentifier("timer.scramble-diagram")
             }
             .padding(.bottom, diagramBottomPadding)
             .frame(height: height, alignment: .bottom)
@@ -440,6 +446,86 @@ private struct TimerTouchSurface: UIViewRepresentable {
             initialPoint = nil
             super.reset()
         }
+    }
+}
+
+private struct TimerSummary: View {
+    let model: TimerModel
+    let height: CGFloat
+    @Environment(\.locale) private var locale
+    @ScaledMetric(relativeTo: .footnote) private var preferredFontSize: CGFloat = 13
+
+    private static let averageKinds: [SolveAverage] = [.mo3, .ao5, .ao12]
+
+    var body: some View {
+        let solves = model.groupSolves
+        let language = locale.appLanguage
+        let latestCount = SolveAverage.ao12.count
+        var validCount = 0
+        var total = 0.0
+        var best: Solve?
+        var recent: [Solve] = []
+
+        for solve in solves {
+            if let seconds = solve.resultSeconds {
+                validCount += 1
+                total += seconds
+                if let fastest = best, let fastestSeconds = fastest.resultSeconds {
+                    if seconds < fastestSeconds || (seconds == fastestSeconds && Solve.newestFirst(solve, fastest)) {
+                        best = solve
+                    }
+                } else {
+                    best = solve
+                }
+            }
+
+            if recent.count < latestCount || Solve.newestFirst(solve, recent[latestCount - 1]) {
+                let index = recent.firstIndex { Solve.newestFirst(solve, $0) } ?? recent.endIndex
+                recent.insert(solve, at: index)
+                if recent.count > latestCount { recent.removeLast() }
+            }
+        }
+
+        let rowHeight = min(20, height / 6)
+        let fontSize = min(preferredFontSize, rowHeight * 0.76)
+        let mean = validCount > 0 ? TimerModel.format(total / Double(validCount)) : "—"
+
+        return VStack(spacing: 0) {
+            row(nil, value: "\(validCount.formatted()) / \(solves.count.formatted())",
+                accessibilityName: language.text("有效成绩次数 / 总次数", "Valid solves / Total attempts"),
+                id: "count", fontSize: fontSize, height: rowHeight)
+            row("mean", value: mean, accessibilityName: language.text("总平均", "Overall mean"),
+                id: "mean", fontSize: fontSize, height: rowHeight)
+            row("best", value: best?.resultText ?? "—", accessibilityName: language.text("最好单次", "Best single"),
+                id: "best", fontSize: fontSize, height: rowHeight)
+            ForEach(Self.averageKinds, id: \.self) { kind in
+                let value = recent.count >= kind.count
+                    ? kind.summarize(recent.prefix(kind.count)).mean.map(TimerModel.format) ?? "DNF"
+                    : "—"
+                row(kind.title, value: value, accessibilityName: kind.title,
+                    id: kind.title, fontSize: fontSize, height: rowHeight)
+            }
+        }
+    }
+
+    private func row(_ title: String?, value: String, accessibilityName: String,
+                     id: String, fontSize: CGFloat, height: CGFloat) -> some View {
+        let text = if let title {
+            Text("\(Text("\(title):").foregroundColor(.secondary)) \(value)")
+        } else {
+            Text(value)
+        }
+        return text
+            .font(.system(size: fontSize, weight: .medium))
+            .monospacedDigit()
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: height)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityName)
+            .accessibilityValue(value)
+            .accessibilityIdentifier("timer-summary.\(id)")
     }
 }
 

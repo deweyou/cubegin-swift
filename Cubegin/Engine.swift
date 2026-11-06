@@ -3,7 +3,21 @@ import Foundation
 import Cubegin
 #endif
 
-struct Scramble: Sendable { let algorithm: String; let svg: String }
+struct Scramble: Sendable {
+    let algorithm: String
+    let svg: String
+
+    var diagramAspectRatio: Double? {
+        guard let viewBox = svg.range(of: "viewBox=\""),
+              let end = svg[viewBox.upperBound...].firstIndex(of: "\"") else { return nil }
+        let dimensions = svg[viewBox.upperBound..<end]
+            .split(whereSeparator: { $0.isWhitespace || $0 == "," })
+        guard dimensions.count == 4,
+              let width = Double(dimensions[2]), let height = Double(dimensions[3]),
+              width.isFinite, height.isFinite, width > 0, height > 0 else { return nil }
+        return width / height
+    }
+}
 enum Engine {
     static func diagram(event: String, algorithm: String) async throws -> String {
         try await Task.detached(priority: .userInitiated) {

@@ -1,8 +1,8 @@
 import SwiftUI
 
-enum SolvePenalty: String, Codable { case plusTwo, dnf }
+enum SolvePenalty: String, Codable, Sendable { case plusTwo, dnf }
 
-struct Solve: Codable, Identifiable {
+struct Solve: Codable, Identifiable, Equatable, Sendable {
     var id = UUID()
     let seconds: Double
     let event: String
@@ -17,6 +17,10 @@ struct Solve: Codable, Identifiable {
         case .dnf: nil
         case nil: seconds
         }
+    }
+
+    static func newestFirst(_ lhs: Solve, _ rhs: Solve) -> Bool {
+        lhs.date == rhs.date ? lhs.id.uuidString < rhs.id.uuidString : lhs.date > rhs.date
     }
 
     @MainActor var resultText: String {
@@ -582,13 +586,129 @@ enum ScrambleCatalog {
     }
 }
 
-enum SolveAverage {
-    static func value(_ solves: [Solve], count: Int) -> Double? {
-        guard count >= 5, solves.count >= count else { return nil }
-        let sorted = solves.prefix(count).map { $0.resultSeconds ?? .infinity }.sorted()
-        let trim = Int(ceil(Double(count) * 0.05))
+struct ResultExtremes: Sendable {
+    static let includeDNFPreferenceKey = "results.includeDNFInWorst"
+    static let defaultIncludesDNF = true
+
+    let includesDNF: Bool
+    private(set) var best: Int?
+    private(set) var worst: Int?
+    private var bestTime = Double.infinity
+    private var worstTime = -Double.infinity
+
+    init(includesDNF: Bool) {
+        self.includesDNF = includesDNF
+    }
+
+    // Results arrive newest first. For ties, mark the oldest best and newest worst.
+    mutating func record(_ time: Double?, at index: Int, tolerance: Double = 0) {
+        guard time != nil || includesDNF else { return }
+        let time = time ?? .infinity
+        if time.isFinite, time <= bestTime + tolerance {
+            best = index
+            bestTime = min(bestTime, time)
+        }
+        if time > worstTime + tolerance {
+            worst = index
+            worstTime = time
+        }
+    }
+}
+
+enum SolveAverage: Int, CaseIterable, Sendable {
+    case mo3 = 3, ao5 = 5, ao12 = 12, ao50 = 50, ao100 = 100, ao500 = 500, ao1000 = 1000, ao10000 = 10000
+
+    var count: Int { rawValue }
+    var title: String { self == .mo3 ? "mo3" : "ao\(count)" }
+    private var trim: Int { self == .mo3 ? 0 : (count + 19) / 20 }
+
+    struct Summary {
+        let mean: Double?
+        let standardDeviation: Double?
+        let hasDNF: Bool
+    }
+
+    @concurrent func rollingExtremes(_ times: [Double?], includesDNF: Bool) async -> ResultExtremes {
+        var extremes = ResultExtremes(includesDNF: includesDNF)
+        forEachRollingMean(times) { start, mean in
+            extremes.record(mean, at: start, tolerance: 1e-9)
+        }
+        return Task.isCancelled ? ResultExtremes(includesDNF: includesDNF) : extremes
+    }
+
+    // Input is newest first. Each mean belongs to the newest solve in its window.
+    nonisolated func forEachRollingMean(_ times: [Double?], _ visit: (Int, Double?) -> Void) {
+        guard times.count >= count else { return }
+
+        // Rank the times once, then keep counts and sums in a Fenwick tree as the window moves.
+        let ordered = times.indices.sorted { (times[$0] ?? .infinity) < (times[$1] ?? .infinity) }
+        var ranks = Array(repeating: 0, count: times.count)
+        for (rank, index) in ordered.enumerated() {
+            ranks[index] = rank + 1
+        }
+        var counts = Array(repeating: 0, count: times.count + 1)
+        var sums = Array(repeating: 0.0, count: times.count + 1)
+        var dnfs = 0
+        func update(_ index: Int, by delta: Int) {
+            if times[index] == nil { dnfs += delta }
+            let change = (times[index] ?? 0) * Double(delta)
+            var node = ranks[index]
+            while node < counts.count {
+                counts[node] += delta
+                sums[node] += change
+                node += node & -node
+            }
+        }
+        let highestBit = 1 << (Int.bitWidth - 1 - times.count.leadingZeroBitCount)
+        func sumOfFastest(_ count: Int) -> Double {
+            var rank = 0
+            var remaining = count
+            var sum = 0.0
+            var bit = highestBit
+            while bit > 0 {
+                let next = rank + bit
+                if next < counts.count, counts[next] <= remaining {
+                    rank = next
+                    remaining -= counts[next]
+                    sum += sums[next]
+                }
+                bit >>= 1
+            }
+            return sum
+        }
+
+        for index in 0..<count { update(index, by: 1) }
+        for start in 0...(times.count - count) {
+            guard !Task.isCancelled else { return }
+            if dnfs > trim {
+                visit(start, nil)
+            } else {
+                let sum = sumOfFastest(count - trim) - sumOfFastest(trim)
+                let mean = sum / Double(count - 2 * trim)
+                visit(start, mean)
+            }
+            let next = start + count
+            if next < times.count {
+                update(start, by: -1)
+                update(next, by: 1)
+            }
+        }
+    }
+
+    // The caller supplies a complete rolling window of this size.
+    func summarize(_ solves: ArraySlice<Solve>) -> Summary {
+        precondition(solves.count == count)
+        let sorted = solves.map { $0.resultSeconds ?? .infinity }.sorted()
         let kept = sorted.dropFirst(trim).dropLast(trim)
-        guard kept.allSatisfy(\.isFinite) else { return nil }
-        return kept.reduce(0, +) / Double(kept.count)
+        let hasDNF = sorted.last == .infinity
+        guard kept.last != .infinity else {
+            return Summary(mean: nil, standardDeviation: nil, hasDNF: hasDNF)
+        }
+        let mean = kept.reduce(0, +) / Double(kept.count)
+        let variance = kept.reduce(0.0) { sum, time in
+            let difference = time - mean
+            return sum + difference * difference
+        } / Double(kept.count)
+        return Summary(mean: mean, standardDeviation: variance.squareRoot(), hasDNF: hasDNF)
     }
 }

@@ -11,6 +11,8 @@ ICON = {isa = PBXFileReference; lastKnownFileType = folder.icon; path = AppIcon.
 ICONBUILD = {isa = PBXBuildFile; fileRef = ICON; };
 TABS = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTabsView.swift; sourceTree = "<group>"; };
 TABSBUILD = {isa = PBXBuildFile; fileRef = TABS; };
+CHARTS = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsCharts.swift; sourceTree = "<group>"; };
+CHARTSBUILD = {isa = PBXBuildFile; fileRef = CHARTS; };
 LAUNCH = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchView.swift; sourceTree = "<group>"; };
 LAUNCHBUILD = {isa = PBXBuildFile; fileRef = LAUNCH; };
 ASSETS = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -19,9 +21,9 @@ LAUNCHSCREEN = {isa = PBXFileReference; lastKnownFileType = file.storyboard; pat
 LAUNCHSCREENBUILD = {isa = PBXBuildFile; fileRef = LAUNCHSCREEN; };
 APP = {isa = PBXFileReference; explicitFileType = wrapper.application; path = cubegin.app; sourceTree = BUILT_PRODUCTS_DIR; };
 ROOT = {isa = PBXGroup; children = (SRC, PRODUCTS); sourceTree = "<group>"; };
-SRC = {isa = PBXGroup; path = Cubegin; children = (F0,F1,F2,F3,TABS,ICON,LAUNCH,ASSETS,LAUNCHSCREEN); sourceTree = "<group>"; };
+SRC = {isa = PBXGroup; path = Cubegin; children = (F0,F1,F2,F3,TABS,CHARTS,ICON,LAUNCH,ASSETS,LAUNCHSCREEN); sourceTree = "<group>"; };
 PRODUCTS = {isa = PBXGroup; children = (APP); name = Products; sourceTree = "<group>"; };
-SOURCES = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B0,B1,B2,B3,TABSBUILD,LAUNCHBUILD); runOnlyForDeploymentPostprocessing = 0; };
+SOURCES = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B0,B1,B2,B3,TABSBUILD,CHARTSBUILD,LAUNCHBUILD); runOnlyForDeploymentPostprocessing = 0; };
 FRAMEWORKS = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (SDKBUILD); runOnlyForDeploymentPostprocessing = 0; };
 RESOURCES = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (ICONBUILD,ASSETSBUILD,LAUNCHSCREENBUILD); runOnlyForDeploymentPostprocessing = 0; };
 SDK = {isa = XCLocalSwiftPackageReference; relativePath = "Vendor/CubeginSDK"; };
