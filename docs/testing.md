@@ -27,8 +27,8 @@ swift test --package-path Vendor/CubeginSDK
 在上述 `xcodebuild test` 命令加上 `-only-testing:CubeginUITests`。
 
 [App checks](../.github/workflows/check.yml) 在 PR、推送到 `main`、合并队列及手动触发时运行。
-`iOS build and tests` 使用 arm64 macOS 26 和 Xcode 26.6，执行无签名 iOS Release
-构建、iPhone 17 Pro（iOS 26.5）App 单测、XCUITest 和随仓 SDK 消费测试。测试结果
+`iOS build and tests` 使用 arm64 macOS 和 Xcode 26.2，执行无签名 iOS Release
+构建、iPhone 17 Pro（iOS 26.2）App 单测、XCUITest 和随仓 SDK 消费测试。测试结果
 `AppTests.xcresult` 生成后保留 14 天。设备构建用于验证编译和链接，安装及交互见下方。
 合入前应通过该检查。GitHub 将其设为必需状态检查需要单独配置仓库规则。
 
